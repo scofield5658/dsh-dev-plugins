@@ -1,0 +1,8 @@
+- insert:
+    - id: db-browser
+      name: '@local/db-browser'
+      config:
+        maxRows: 500
+        queryTimeoutMs: 30000
+        allowWrites: false
+        connections: []

@@ -1,0 +1,50 @@
+{
+  "name": "@local/db-browser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DBeaver-style database browser sidebar panel with agent tools (MySQL/TDSQL/GoldenDB, Oracle, Redis).",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "mcp-server.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.mjs"
+  },
+  "engines": {
+    "dsh": ">=0.2.2-rc.5 <0.3.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.19.0",
+    "ioredis": "^5.4.2",
+    "mysql2": "^3.11.5",
+    "oracledb": "^6.7.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "bin": {
+    "db-browser-mcp": "./mcp-server.js"
+  }
+}

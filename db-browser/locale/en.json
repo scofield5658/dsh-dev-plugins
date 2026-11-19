@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Database browser",
+    "description": "A DBeaver-style database panel in the sidebar. Manage MySQL (including TDSQL and GoldenDB), Oracle, and Redis connections, browse schemas and tables, run SQL in an editor, and inspect Redis keys. Redis supports standalone, Sentinel, and Cluster deployments; MySQL and Oracle accept multiple hosts for failover. The same operations are exposed to the agent through the db_browser and redis_browser tools, so the agent can inspect data on request. Connections are read-only by default (SELECT/SHOW/DESC/EXPLAIN and read-only Redis commands); set allowWrites: true in the plugin configuration to enable writes. Passwords are stored in the credential store, never in configuration. Open the panel from the database icon in the sidebar's panel list."
+  }
+}

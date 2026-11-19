@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Kafka",
+    "description": "Kafka Tool-style data query panel in the sidebar's panel list. Connect by broker addresses (SSL and SASL PLAIN/SCRAM supported), browse topics with per-partition offsets, inspect consumer groups and lag, and subscribe to multiple topics with a paged, virtualized message stream. The list carries metadata only (timestamp, topic, partition, offset, key, size); clicking a row fetches the payload on demand into a detail dialog with hex, text, and JSON views. Refresh manually or with a configurable polling interval. The same read operations are exposed to the agent through the kafka_query tool. Connections start manually and drop automatically when DSH exits.",
+    "detail": "docs/DETAIL.md"
+  }
+}

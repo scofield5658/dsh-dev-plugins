@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "数据库浏览器",
+    "description": "侧边栏中的 DBeaver 风格数据库面板。管理 MySQL（兼容 TDSQL、GoldenDB）、Oracle、Redis 连接，浏览库表结构，在 SQL 编辑器中执行查询，查看 Redis 键值。Redis 支持单机、哨兵（Sentinel）和集群（Cluster）三种部署模式；MySQL/Oracle 支持配置多个主机实现故障切换。同样的操作通过 db_browser 与 redis_browser 两个工具暴露给 Agent，可让 Agent 按需查询数据。默认只读（仅 SELECT/SHOW/DESC/EXPLAIN 与只读 Redis 命令）；在插件配置中设置 allowWrites: true 可放开写操作。密码保存在凭据存储中，不会写入配置文件。在侧边栏面板列表中点击数据库图标打开面板。"
+  }
+}

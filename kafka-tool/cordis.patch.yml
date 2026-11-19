@@ -1,0 +1,8 @@
+- insert:
+    - id: kafka-tool
+      name: '@local/kafka-tool'
+      config:
+        # Default connection form for the panel (password is never stored here).
+        brokers: []
+        ssl: false
+        # sasl: { mechanism: plain, username: '' }   # plain | scram-sha-256 | scram-sha-512

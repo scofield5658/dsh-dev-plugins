@@ -1,0 +1,100 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { apply, Config } from '../index.js'
+
+/**
+ * Cold-boot regression: apply() must not consume services with a one-shot
+ * ctx.get — at boot there is no start-order guarantee, and a silent skip
+ * leaves the panel's routes unregistered forever (HTTP 404). Registration
+ * must go through ctx.inject so it happens once the services are published.
+ */
+function harness() {
+  const services = new Map()
+  const injectCalls = []
+  const effectDisposers = []
+  const ctx = {
+    get: (name) => services.get(name),
+    effect: (fn) => { const dispose = fn(); effectDisposers.push(dispose); return dispose },
+    inject: (deps, callback) => {
+      injectCalls.push({ deps, callback })
+      return { async dispose() {} }
+    },
+  }
+  const registered = { routes: [], tools: [], disposed: 0 }
+  const webServer = {
+    register(route) {
+      registered.routes.push(route)
+      return () => { registered.disposed += 1; registered.routes.splice(registered.routes.indexOf(route), 1) }
+    },
+  }
+  const connection = { requestRejection: () => 401 }
+  const tools = { register: (def) => { registered.tools.push(def.name); return () => {} } }
+  return { ctx, services, injectCalls, effectDisposers, registered, webServer, connection, tools }
+}
+
+test('apply defers route and tool registration until services are published', () => {
+  const h = harness()
+  // Services absent, exactly as at a cold boot where this row starts first.
+  apply(h.ctx, {})
+
+  assert.equal(h.registered.routes.length, 0, 'no routes may be registered before webServer exists')
+  assert.equal(h.registered.tools.length, 0, 'no tools may be registered before the tools service exists')
+  assert.deepEqual(
+    h.injectCalls.map((c) => c.deps),
+    [['webServer', 'connection'], ['tools']],
+    'registration must be deferred through ctx.inject',
+  )
+
+  // The runtime fires the inject callbacks once the services appear.
+  h.services.set('webServer', h.webServer)
+  h.services.set('connection', h.connection)
+  h.services.set('tools', h.tools)
+  for (const call of h.injectCalls) call.callback(h.ctx)
+
+  assert.equal(h.registered.routes.length, 1)
+  assert.equal(h.registered.routes[0].kind, 'prefix')
+  assert.equal(h.registered.routes[0].path, '/db-browser')
+  assert.deepEqual(h.registered.tools.sort(), ['db_browser', 'redis_browser'])
+
+  // Disposal path: effects unregister the route so a service reload can re-add it.
+  const before = h.registered.disposed
+  for (const dispose of h.effectDisposers) dispose()
+  assert.equal(h.registered.routes.length, 0)
+  assert.equal(h.registered.disposed, before + 1)
+})
+
+test('Config accepts the saved connection shape and rejects a bad limit', () => {
+  const saved = Config({
+    connections: [
+      { id: 'goats', type: 'mysql', label: 'goats', hosts: [{ host: '10.0.0.1', port: 3306 }], user: 'otc', database: 'goats' },
+      { id: 'ora', type: 'oracle', label: 'ora', hosts: [{ host: '10.0.0.2', port: 1521 }], user: 'u', serviceName: 'testdb' },
+    ],
+  })
+  assert.equal(saved.maxRows, 500)
+  assert.equal(saved.queryTimeoutMs, 30000)
+  assert.equal(saved.allowWrites, false)
+  assert.deepEqual(saved.connections.map((row) => row.id), ['goats', 'ora'])
+  assert.throws(() => Config({ maxRows: 0 }), /maxRows/)
+  assert.throws(() => apply(harness().ctx, { connections: [{ id: 'bad', type: 'nope' }] }), /type/)
+})
+
+test('unloading closes sessions inside the plugin and does not throw', async () => {
+  const h = harness()
+  apply(h.ctx, {})
+  for (const call of h.injectCalls) call.callback(h.ctx)
+  const coreEffect = h.effectDisposers.find((fn) => fn.constructor.name === 'AsyncFunction' || String(fn).includes('core.closed'))
+  assert.equal(typeof coreEffect, 'function')
+  await coreEffect()
+})
+
+test('apply works when services are already present at apply time (hot reload)', () => {
+  const h = harness()
+  h.services.set('webServer', h.webServer)
+  h.services.set('connection', h.connection)
+  h.services.set('tools', h.tools)
+  apply(h.ctx, {})
+  // Still inject-driven; firing the callbacks registers everything.
+  for (const call of h.injectCalls) call.callback(h.ctx)
+  assert.equal(h.registered.routes.length, 1)
+  assert.deepEqual(h.registered.tools.sort(), ['db_browser', 'redis_browser'])
+})

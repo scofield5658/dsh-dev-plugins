@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Kafka",
+    "description": "侧边栏面板列表中的 Kafka Tool 风格数据查询面板。通过 broker 地址连接集群（支持 SSL 与 SASL PLAIN/SCRAM），浏览 topic 及分区位点，查看消费者组与滞后（lag），并可同时订阅多个 topic 的消息流（分页 + 虚拟滚动）。消息列表只带元数据（时间戳、topic、partition、offset、key、大小）；点击行按需拉取 payload，在详情弹窗中以 Hex、文本、JSON 三种方式查看。支持手动刷新与可配置间隔的自动刷新。同样的只读操作通过 kafka_query 工具暴露给 Agent；连接由用户手动启动，DSH 退出时自动断开。",
+    "detail": "docs/DETAIL.md"
+  }
+}
