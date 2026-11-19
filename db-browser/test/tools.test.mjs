@@ -23,6 +23,9 @@ test('buildToolDefinitions exposes the two tools with MCP-compatible schemas', (
   const db = tools.find((t) => t.name === 'db_browser')
   assert.ok(db.parameters.properties.action.enum.includes('connect'))
   assert.ok(db.parameters.properties.action.enum.includes('list_indexes'))
+  for (const action of ['list_routines', 'show_routine', 'call_routine']) {
+    assert.ok(db.parameters.properties.action.enum.includes(action), `db_browser exposes ${action}`)
+  }
 })
 
 test('db_browser list_connections carries lifecycle status', async () => {

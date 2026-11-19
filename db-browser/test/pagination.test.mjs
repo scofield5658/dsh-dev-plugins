@@ -13,6 +13,17 @@ test('paginateSelect: mysql first page and offset page', () => {
   )
 })
 
+test('paginateSelect: postgres uses LIMIT/OFFSET', () => {
+  assert.equal(
+    paginateSelect('SELECT * FROM t', 'postgres', 0, 500),
+    'SELECT * FROM (SELECT * FROM t) AS dbb_q LIMIT 501 OFFSET 0',
+  )
+  assert.equal(
+    paginateSelect('SELECT * FROM t', 'postgres', 1000, 500),
+    'SELECT * FROM (SELECT * FROM t) AS dbb_q LIMIT 501 OFFSET 1000',
+  )
+})
+
 test('paginateSelect: oracle uses nested ROWNUM (11g compatible)', () => {
   assert.equal(
     paginateSelect('SELECT * FROM t', 'oracle', 0, 100),

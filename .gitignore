@@ -1,0 +1,33 @@
+# 操作系统
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 编辑器与临时文件
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 依赖与包管理
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+
+# 日志、环境与构建产物
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+dist/
+.cache/
+*.tsbuildinfo

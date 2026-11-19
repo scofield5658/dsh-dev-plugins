@@ -2,10 +2,17 @@
 
 一个 DBeaver 风格的侧边栏数据库面板，同时向 Agent 暴露查询工具。
 
-- **支持的数据库**：MySQL（兼容 TDSQL、GoldenDB）、Oracle（12.1+ 走 Thin 模式，无需客户端；更老的 11g 等版本自动回退到 Thick 模式，需要本机装有 Oracle Instant Client，默认探测 `~/lib/oracle-instantclient`，也可用插件配置 `oracleClientLib` 指定）、Redis（单机 / Sentinel / Cluster）。
-- **界面**：侧边栏面板列表中的「数据库」入口。左侧连接树（连接 → 库/Schema → 表），右侧 SQL 编辑器与结果网格；Redis 连接提供键扫描与值查看。
-- **Agent 工具**：`db_browser`（连接列表、库表结构、执行 SQL）与 `redis_browser`（INFO、扫描键、读值、只读命令）。
-- **安全**：默认只读；在插件配置中设 `allowWrites: true` 才允许写操作。密码保存在凭据存储，不进入配置文件。
+- **支持的数据库**（连接类型按厂商细分，驱动按引擎族复用）：
+  - MySQL 族（mysql2 驱动）：`mysql`、`tdsql-mysql`（TDSQL MySQL 版）、`goldendb`
+  - PostgreSQL 族（pg 驱动）：`postgres`、`tdsql-pg`（TDSQL PG 版）
+  - `oracle`：12.1+ 走 Thin 模式，无需客户端；更老的 11g 等版本自动回退到 Thick 模式，需要本机装有 Oracle Instant Client（默认探测 `~/lib/oracle-instantclient`，也可用插件配置 `oracleClientLib` 指定）
+  - `redis`：单机 / Sentinel / Cluster
+- **特性矩阵**：厂商之间能力不同（典型差异：TDSQL、GoldenDB 不支持存储过程；DDL 查看只有 MySQL 族有）。每种类型有一组默认特性开关（`showCreate` / `explain` / `procedures`），面板和 Agent 工具按它显示或拒绝对应能力；可以在插件配置 `features` 里按类型覆盖。
+- **存储过程**：`procedures: true` 的类型（默认 MySQL、PostgreSQL、Oracle）提供存储过程/函数的列表、定义查看和执行（Oracle 含 PACKAGE 源码查看；执行仅限独立 procedure，且要求 `allowWrites: true`）。
+- **连接池**：每个启动的连接维护一个常驻连接池（mysql2/pg/oracledb 各自的 pool，大小由 `poolMax` 控制，默认 4），界面与 Agent 并发查询共享，避免频繁建连。Redis 单连接天然多路复用，不需要池。
+- **界面**：侧边栏面板列表中的「数据库」入口。左侧连接树（连接 → 库/Schema → 表），右侧 SQL 编辑器与结果网格；支持存储过程的连接有「SQL / 存储过程」子页签；Redis 连接提供键扫描与值查看。
+- **Agent 工具**：`db_browser`（连接列表、库表结构、执行 SQL、存储过程 list/show/call）与 `redis_browser`（INFO、扫描键、读值、只读命令）。
+- **安全**：默认只读；在插件配置中设 `allowWrites: true` 才允许写操作与存储过程执行。密码保存在凭据存储，不进入配置文件。
 
 ## 连接配置
 
@@ -14,13 +21,23 @@
 ```yaml
 config:
   allowWrites: false
+  poolMax: 4               # 每个连接的连接池上限（1-50）
+  # 特性覆盖：在默认值之上按类型微调（默认值见「特性矩阵」）
+  features:
+    goldendb:
+      procedures: false    # TDSQL/GoldenDB 不支持存储过程，默认已隐藏
   connections:
     - id: my-mysql
       label: 业务库
-      type: mysql          # mysql | oracle | redis
+      type: mysql          # mysql | tdsql-mysql | goldendb | postgres | tdsql-pg | oracle | redis
       hosts: [{ host: 10.0.0.1, port: 3306 }]   # 多个主机按顺序故障切换
       user: root
       database: app
+    - id: my-pg
+      type: postgres       # 或 tdsql-pg
+      hosts: [{ host: 10.0.0.4, port: 5432 }]
+      user: postgres
+      database: app        # 省略时连接默认的 postgres 库
     - id: my-oracle
       type: oracle
       hosts: [{ host: 10.0.0.2, port: 1521 }]
@@ -35,6 +52,27 @@ config:
 ```
 
 密码通过面板的连接表单保存（写入凭据存储），不要写进配置。
+
+## 特性矩阵
+
+| 类型 | 引擎族 | showCreate | explain | procedures（存储过程） |
+| --- | --- | --- | --- | --- |
+| `mysql` | mysql | ✅ | ✅ | ✅ |
+| `tdsql-mysql` | mysql | ✅ | ✅ | ❌（TDSQL 不支持） |
+| `goldendb` | mysql | ✅ | ✅ | ❌（GoldenDB 不支持） |
+| `postgres` | postgres | ❌ | ✅ | ✅ |
+| `tdsql-pg` | postgres | ❌ | ✅ | ❌（TDSQL 不支持） |
+| `oracle` | oracle | ❌ | ✅ | ✅ |
+
+`procedures: false` 的类型：面板不显示「存储过程」子页签，Agent 调用 `list_routines / show_routine / call_routine` 会得到 `unsupported` 错误。确需放开时在 `features.<type>.procedures: true` 覆盖（服务端仍可能拒绝，那是数据库自身的限制）。
+
+## Agent 工具动作（db_browser）
+
+浏览与查询：`list_connections`、`connect`、`disconnect`、`list_databases`、`list_tables`、`describe_table`、`list_indexes`、`preview_table`、`show_create`（仅 MySQL 族）、`query`。
+
+存储过程（受特性矩阵门控）：`list_routines`（connection, database）、`show_routine`（connection, database, object, Oracle 可用 kind 区分 PACKAGE）、`call_routine`（connection, database, object, args 为按声明顺序的字符串数组，仅限独立 procedure，且需 `allowWrites: true`）。
+
+其中 `database` 参数对 MySQL 族指数据库名，对 Oracle / PostgreSQL 指 schema（owner / nspname）。
 
 ## 连接的生命周期
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assertReadOnlySql, hasMultipleStatements } from '../index.js'
+import { assertReadOnlySql, hasMultipleStatements, statementKind } from '../index.js'
 
 const RO = false
 const RW = true
@@ -59,6 +59,17 @@ test('empty SQL is a bad request', () => {
   assert.throws(() => assertReadOnlySql('', RO), (e) => e.code === 'bad-request')
   assert.throws(() => assertReadOnlySql('   ', RO), (e) => e.code === 'bad-request')
   assert.throws(() => assertReadOnlySql(42, RO), (e) => e.code === 'bad-request')
+})
+
+test('statement kind distinguishes plans, catalogs, and queries', () => {
+  assert.equal(statementKind('EXPLAIN SELECT 1'), 'plan')
+  assert.equal(statementKind('/* c */ explain analyze select 1'), 'plan')
+  assert.equal(statementKind('SHOW TABLES'), 'catalog')
+  assert.equal(statementKind('DESC t'), 'catalog')
+  assert.equal(statementKind('DESCRIBE t'), 'catalog')
+  assert.equal(statementKind('SELECT 1'), 'query')
+  assert.equal(statementKind('WITH x AS (SELECT 1) SELECT * FROM x'), 'query')
+  assert.equal(statementKind('UPDATE t SET a = 1'), 'write')
 })
 
 test('hasMultipleStatements is quote/comment aware', () => {

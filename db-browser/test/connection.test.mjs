@@ -29,6 +29,26 @@ test('normalizeConnection: oracle needs serviceName or connectString', () => {
   assert.equal(both.connectString, 'full/descriptor')
 })
 
+test('normalizeConnection: vendor types within the mysql and postgres families', () => {
+  for (const type of ['tdsql-mysql', 'goldendb']) {
+    const c = normalizeConnection({ id: 'x1', type, user: 'u', hosts: [{ host: 'h' }], database: 'biz' })
+    assert.equal(c.hosts[0].port, 3306, `${type} keeps the mysql-family default port`)
+    assert.equal(c.database, 'biz')
+  }
+  for (const type of ['postgres', 'tdsql-pg']) {
+    const c = normalizeConnection({ id: 'x2', type, user: 'u', hosts: [{ host: 'h' }] })
+    assert.equal(c.hosts[0].port, 5432, `${type} uses the postgres default port`)
+    assert.equal(c.database, undefined) // driver falls back to "postgres"
+  }
+  const pg = normalizeConnection({ id: 'x3', type: 'postgres', user: 'u', hosts: [{ host: 'h' }], database: 'app' })
+  assert.equal(pg.database, 'app')
+  // Oracle fields stay oracle-only; postgres connections must not require them.
+  assert.throws(
+    () => normalizeConnection({ id: 'x4', type: 'postgres', hosts: [{ host: 'h' }] }),
+    (e) => e.code === 'bad-request', // still requires user
+  )
+})
+
 test('normalizeConnection: redis modes', () => {
   const single = normalizeConnection({ id: 'r1', type: 'redis', hosts: [{ host: 'h' }] })
   assert.equal(single.mode, 'standalone')

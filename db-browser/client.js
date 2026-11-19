@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
       'test': '测试连接',
       'save': '保存',
       'cancel': '取消',
-      'emptyConnections': '还没有连接。点击「新建连接」添加 MySQL / Oracle / Redis。',
+      'emptyConnections': '还没有连接。点击「新建连接」添加 MySQL / TDSQL / GoldenDB / PostgreSQL / Oracle / Redis。',
       'confirmDelete': '确定删除连接「{label}」吗？其密码会一并移除。',
       'form.titleNew': '新建连接',
       'form.titleEdit': '编辑连接',
@@ -77,6 +77,12 @@ window.__ModuleLoader__.load({
       'result.page.next': '下一页',
       'result.page.range': '第 {from}–{to} 行',
       'result.page.size': '每页',
+      'result.kind.query': '查询结果',
+      'result.kind.plan': '执行计划',
+      'result.kind.catalog': '语句结果',
+      'result.kind.write': '执行完成',
+      'tab.close': '关闭标签',
+      'tab.empty': '从左侧打开一个连接。每个连接同时只保留一个标签。',
       'table.columns': '列',
       'table.indexes': '索引',
       'table.preview': '预览数据',
@@ -97,6 +103,37 @@ window.__ModuleLoader__.load({
       'welcome.title': '数据库浏览器',
       'welcome.body': '从左侧选择一个连接开始浏览，或新建连接。Agent 也可以通过 db_browser / redis_browser 工具查询这些连接。',
       'close': '关闭',
+      'tab.sql': 'SQL',
+      'tab.routines': '存储过程',
+      'routine.schema': '模式 / 数据库',
+      'routine.refresh': '刷新',
+      'routine.empty': '该模式下没有存储过程或函数',
+      'routine.select': '从列表中选择一个对象查看定义',
+      'routine.args': '参数（JSON 数组，按声明顺序，例如 ["1001", "test"]）',
+      'routine.call': '执行',
+      'routine.calling': '执行中…',
+      'routine.done': '执行成功',
+      'routine.needWrites': '执行存储过程可能修改数据，需要在插件配置中开启 allowWrites',
+      'routine.onlyProcedure': '只有独立存储过程（procedure）支持在此执行',
+      'routine.loading': '加载中…',
+      'grid.region': '结果表格（聚焦后可用方向键滚动）',
+      'grid.null': 'NULL',
+      'cols.name': '列名',
+      'cols.type': '类型',
+      'cols.null': '可空',
+      'cols.key': '键',
+      'cols.default': '默认值',
+      'cols.extra': '额外信息',
+      'idx.columns': '包含列',
+      'idx.unique': '唯一',
+      'redis.kv.field': '字段',
+      'redis.kv.value': '值',
+      'redis.kv.member': '成员',
+      'redis.kv.score': '分值',
+      'redis.keyNotFound': '（键不存在）',
+      'conn.status.open': '已启动',
+      'conn.status.stopped': '未启动',
+      'form.aclOptional': '（ACL，可选）',
     }
     const en = {
       'panel': 'Database',
@@ -113,7 +150,7 @@ window.__ModuleLoader__.load({
       'test': 'Test connection',
       'save': 'Save',
       'cancel': 'Cancel',
-      'emptyConnections': 'No connections yet. Use "New connection" to add MySQL / Oracle / Redis.',
+      'emptyConnections': 'No connections yet. Use "New connection" to add MySQL / TDSQL / GoldenDB / PostgreSQL / Oracle / Redis.',
       'confirmDelete': 'Delete connection "{label}"? Its stored password is removed too.',
       'form.titleNew': 'New connection',
       'form.titleEdit': 'Edit connection',
@@ -160,6 +197,12 @@ window.__ModuleLoader__.load({
       'result.page.next': 'Next',
       'result.page.range': 'Rows {from}–{to}',
       'result.page.size': 'Page size',
+      'result.kind.query': 'Query result',
+      'result.kind.plan': 'Execution plan',
+      'result.kind.catalog': 'Statement result',
+      'result.kind.write': 'Completed',
+      'tab.close': 'Close tab',
+      'tab.empty': 'Open a connection on the left. Each connection keeps at most one tab.',
       'table.columns': 'Columns',
       'table.indexes': 'Indexes',
       'table.preview': 'Data preview',
@@ -180,10 +223,41 @@ window.__ModuleLoader__.load({
       'welcome.title': 'Database browser',
       'welcome.body': 'Pick a connection on the left, or create one. The agent can query the same connections through the db_browser / redis_browser tools.',
       'close': 'Close',
+      'tab.sql': 'SQL',
+      'tab.routines': 'Routines',
+      'routine.schema': 'Schema / database',
+      'routine.refresh': 'Refresh',
+      'routine.empty': 'No stored procedures or functions in this schema',
+      'routine.select': 'Pick an object on the left to view its definition',
+      'routine.args': 'Arguments (JSON array, in declaration order, e.g. ["1001", "test"])',
+      'routine.call': 'Execute',
+      'routine.calling': 'Executing…',
+      'routine.done': 'Executed successfully',
+      'routine.needWrites': 'Executing a routine can modify data; enable allowWrites in the plugin config first',
+      'routine.onlyProcedure': 'Only standalone procedures can be executed here',
+      'routine.loading': 'Loading…',
+      'grid.region': 'Data grid (scroll with arrow keys when focused)',
+      'grid.null': 'NULL',
+      'cols.name': 'Name',
+      'cols.type': 'Type',
+      'cols.null': 'Null',
+      'cols.key': 'Key',
+      'cols.default': 'Default',
+      'cols.extra': 'Extra',
+      'idx.columns': 'Columns',
+      'idx.unique': 'Unique',
+      'redis.kv.field': 'field',
+      'redis.kv.value': 'value',
+      'redis.kv.member': 'member',
+      'redis.kv.score': 'score',
+      'redis.keyNotFound': '(key not found)',
+      'conn.status.open': 'open',
+      'conn.status.stopped': 'stopped',
+      'form.aclOptional': '(ACL, optional)',
     }
 
     // Survives panel remounts: where the user was, never what the server returned.
-    const viewState = { selected: null }
+    const viewState = { tabs: [], activeId: null, views: {} }
 
     // ---------- data ----------
 
@@ -266,9 +340,26 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** Vendor type → engine family (mirrors the Host half); styling follows the family. */
+    const FAMILY = {
+      mysql: 'mysql', 'tdsql-mysql': 'mysql', goldendb: 'mysql',
+      postgres: 'postgres', 'tdsql-pg': 'postgres',
+      oracle: 'oracle', redis: 'redis',
+    }
+    const TYPE_OPTIONS = [
+      ['mysql', 'MySQL'],
+      ['tdsql-mysql', 'TDSQL (MySQL)'],
+      ['goldendb', 'GoldenDB'],
+      ['postgres', 'PostgreSQL'],
+      ['tdsql-pg', 'TDSQL (PG)'],
+      ['oracle', 'Oracle'],
+      ['redis', 'Redis'],
+    ]
+    const TYPE_LABELS = Object.fromEntries(TYPE_OPTIONS)
+    const FAMILY_PORT = { mysql: 3306, postgres: 5432, oracle: 1521 }
+
     function TypeBadge({ type }) {
-      const label = type === 'mysql' ? 'MySQL' : type === 'oracle' ? 'Oracle' : 'Redis'
-      return h('span', { className: `dbb-badge dbb-badge-${type}` }, label)
+      return h('span', { className: `dbb-badge dbb-badge-${FAMILY[type] ?? type}` }, TYPE_LABELS[type] ?? type)
     }
 
     function ErrorBar({ error, onClose, t }) {
@@ -280,16 +371,32 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function resultSummary(result, t) {
+      const parts = []
+      if (result.statementKind) parts.push(t(`result.kind.${result.statementKind}`))
+      if (typeof result.tookMs === 'number') parts.push(fmt(t, 'result.took', { ms: result.tookMs }))
+      if (typeof result.affectedRows === 'number' && (!result.columns || result.columns.length === 0)) {
+        parts.push(fmt(t, 'result.affected', { n: result.affectedRows }))
+      } else {
+        parts.push(fmt(t, 'result.rows', { n: result.rowCount ?? (result.rows ?? []).length }))
+        if (result.truncated) parts.push(t('result.truncated'))
+      }
+      return parts.join(' · ')
+    }
+
+    function cellText(row, column, index) {
+      const cell = Array.isArray(row) ? row[index] : row?.[column]
+      if (cell === null || cell === undefined) return null
+      return typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
+    }
+
     function ResultGrid({ result, t }) {
       if (!result) return null
-      if (typeof result.affectedRows === 'number' && (!result.columns || result.columns.length === 0)) {
-        return h('div', { className: 'dbb-result-meta' },
-          fmt(t, 'result.affected', { n: result.affectedRows }),
-          typeof result.tookMs === 'number' ? ' · ' + fmt(t, 'result.took', { ms: result.tookMs }) : null)
-      }
       const columns = result.columns ?? []
       const allRows = result.rows ?? []
-      const rows = allRows
+      const planText = result.statementKind === 'plan'
+        ? allRows.map((row) => columns.map((column, index) => cellText(row, column, index)).filter((text) => text !== null).join('\t')).join('\n')
+        : ''
       const copyCsv = () => {
         const esc = (v) => {
           const s = v === null || v === undefined ? '' : String(v)
@@ -298,34 +405,37 @@ window.__ModuleLoader__.load({
         const text = [columns.map(esc).join(','), ...allRows.map((row) => columns.map((_, ci) => esc(Array.isArray(row) ? row[ci] : row?.[columns[ci]])).join(','))].join('\n')
         navigator.clipboard?.writeText(text).catch(() => {})
       }
+      const wide = result.statementKind === 'plan' || result.statementKind === 'catalog'
       return h('div', { className: 'dbb-grid-wrap' },
         h('div', { className: 'dbb-result-meta' },
-          fmt(t, 'result.rows', { n: result.rowCount ?? allRows.length }),
-          result.truncated ? ` (${t('result.truncated')})` : '',
-          typeof result.tookMs === 'number' ? ' · ' + fmt(t, 'result.took', { ms: result.tookMs }) : null,
+          resultSummary(result, t),
           ' ',
           allRows.length > 0 ? h('button', { className: 'dbb-link', onClick: copyCsv }, t('result.copyCsv')) : null,
         ),
+        planText && columns.length <= 2
+          ? h('pre', { className: 'dbb-pre dbb-plan' }, planText)
+          : null,
         columns.length === 0
-          ? h('div', { className: 'dbb-muted' }, t('result.empty'))
-          : h(VirtualGrid, { columns, rows, t }),
+          ? (typeof result.affectedRows === 'number' ? null : h('div', { className: 'dbb-muted' }, t('result.empty')))
+          : h(VirtualGrid, { columns, rows: allRows, t, wide, label: t('grid.region') }),
       )
     }
 
     const GRID_ROW_H = 27
-    function VirtualGrid({ columns, rows, t }) {
+    function VirtualGrid({ columns, rows, wide, label, t }) {
       const { ref, range, onScroll } = useWindowed(rows.length, GRID_ROW_H)
       const topH = range.start * GRID_ROW_H
       const bottomH = Math.max(0, (rows.length - range.end) * GRID_ROW_H)
-      return h('div', { className: 'dbb-grid-scroll', ref, onScroll },
-        h('table', { className: 'dbb-grid' },
+      // tabindex + region: keyboard users can scroll the grid without a mouse.
+      return h('div', { className: 'dbb-grid-scroll' + (wide ? ' dbb-grid-scroll-wide' : ''), ref, onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'data grid' },
+        h('table', { className: 'dbb-grid' + (wide ? ' dbb-grid-wide' : '') },
           h('thead', null, h('tr', null, columns.map((c, i) => h('th', { key: i }, String(c))))),
           h('tbody', null,
             topH > 0 ? h('tr', { key: 'top', className: 'dbb-spacer' }, h('td', { colSpan: columns.length, style: { height: topH, padding: 0, border: 'none' } })) : null,
             rows.slice(range.start, range.end).map((row, ri) =>
               h('tr', { key: range.start + ri }, columns.map((_, ci) => {
                 const cell = Array.isArray(row) ? row[ci] : row?.[columns[ci]]
-                if (cell === null || cell === undefined) return h('td', { key: ci, className: 'dbb-null' }, 'NULL')
+                if (cell === null || cell === undefined) return h('td', { key: ci, className: 'dbb-null' }, t ? t('grid.null') : 'NULL')
                 const text = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
                 return h('td', { key: ci, title: text }, text)
               })),
@@ -340,6 +450,44 @@ window.__ModuleLoader__.load({
 
     function ConnectionForm({ initial, onClose, onSaved, onDelete, onSaveUncertain, t }) {
       const isEdit = Boolean(initial?.id)
+      const dialogRef = useRef(null)
+      const onCloseRef = useRef(onClose)
+      onCloseRef.current = onClose
+      // Native <dialog>: showModal gives focus containment, Esc/back-gesture
+      // dismissal and top-layer rendering for free; the close event is the one
+      // place that syncs React state, however the dialog went away.
+      useEffect(() => {
+        const dlg = dialogRef.current
+        if (!dlg) return
+        if (!dlg.open) dlg.showModal()
+        const syncClose = () => onCloseRef.current()
+        dlg.addEventListener('close', syncClose)
+        // closedby="any" covers click-outside in supporting browsers; where it
+        // is missing, compare pointer coordinates with the dialog rect (the
+        // dialog is the event target for its own padding, so target checks lie).
+        let pressedOutside = false
+        const outside = (e) => {
+          const r = dlg.getBoundingClientRect()
+          return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+        }
+        const onDown = (e) => { pressedOutside = outside(e) }
+        const onUp = (e) => {
+          if ('closedBy' in HTMLDialogElement.prototype) return
+          if (pressedOutside && outside(e)) dlg.close()
+        }
+        dlg.addEventListener('pointerdown', onDown)
+        dlg.addEventListener('pointerup', onUp)
+        return () => {
+          dlg.removeEventListener('close', syncClose)
+          dlg.removeEventListener('pointerdown', onDown)
+          dlg.removeEventListener('pointerup', onUp)
+        }
+      }, [])
+      const closeDialog = useCallback(() => {
+        const dlg = dialogRef.current
+        if (dlg?.open) dlg.close()
+        else onCloseRef.current()
+      }, [])
       const [draft, setDraft] = useState(() => initial ?? { type: 'mysql', mode: 'standalone' })
       const [password, setPassword] = useState('')
       const [clearPassword, setClearPassword] = useState(false)
@@ -363,7 +511,8 @@ window.__ModuleLoader__.load({
           if (draft.username) c.username = draft.username
         } else {
           c.user = draft.user ?? ''
-          if (c.type === 'mysql') { if (draft.database) c.database = draft.database }
+          const family = FAMILY[c.type]
+          if (family === 'mysql' || family === 'postgres') { if (draft.database) c.database = draft.database }
           else {
             if (draft.connectString) c.connectString = draft.connectString
             if (draft.serviceName) c.serviceName = draft.serviceName
@@ -410,19 +559,16 @@ window.__ModuleLoader__.load({
           hintKey ? h('span', { className: 'dbb-field-hint' }, t(hintKey)) : null,
         )
       const input = (value, onChange, opts) => h('input', { className: 'dbb-input', value: value ?? '', onChange: (e) => onChange(e.target.value), ...opts })
-      useEffect(() => {
-        const onKey = (e) => { if (e.key === 'Escape') onClose() }
-        document.addEventListener('keydown', onKey)
-        return () => document.removeEventListener('keydown', onKey)
-      }, [onClose])
-      return h('div', { className: 'dbb-modal-mask', onClick: (e) => { if (e.target === e.currentTarget) onClose() } },
-        h('div', { className: 'dbb-modal', role: 'dialog', 'aria-label': isEdit ? t('form.titleEdit') : t('form.titleNew') },
-          h('div', { className: 'dbb-modal-title' }, isEdit ? t('form.titleEdit') : t('form.titleNew')),
+      return h('dialog', {
+          className: 'dbb-modal', ref: dialogRef, closedby: 'any',
+          'aria-labelledby': 'dbb-conn-form-title',
+        },
+          h('div', { className: 'dbb-modal-title', id: 'dbb-conn-form-title' }, isEdit ? t('form.titleEdit') : t('form.titleNew')),
           h('div', { className: 'dbb-modal-body' },
             field('form.type', h('select', {
               className: 'dbb-input', value: draft.type,
               onChange: (e) => setDraft((d) => ({ ...d, type: e.target.value })),
-            }, ['mysql', 'oracle', 'redis'].map((v) => h('option', { key: v, value: v }, v === 'mysql' ? 'MySQL / TDSQL / GoldenDB' : v === 'oracle' ? 'Oracle' : 'Redis')))),
+            }, TYPE_OPTIONS.map(([v, label]) => h('option', { key: v, value: v }, label)))),
             draft.type === 'redis'
               ? field('form.mode', h('select', {
                   className: 'dbb-input', value: draft.mode ?? 'standalone',
@@ -434,17 +580,17 @@ window.__ModuleLoader__.load({
             field('form.hosts', h('textarea', {
               className: 'dbb-input dbb-textarea', rows: 2,
               value: draft.hostsText ?? hostsToText(draft.hosts),
-              placeholder: draft.type === 'redis' && draft.mode === 'sentinel' ? '10.0.0.1:26379' : draft.type === 'oracle' ? '10.0.0.1:1521' : '10.0.0.1:3306',
+              placeholder: draft.type === 'redis' && draft.mode === 'sentinel' ? '10.0.0.1:26379' : `10.0.0.1:${FAMILY_PORT[FAMILY[draft.type]] ?? 3306}`,
               onChange: (e) => setDraft((d) => ({ ...d, hostsText: e.target.value })),
             }), 'form.hostsHint'),
             draft.type === 'redis' && draft.mode === 'sentinel' ? field('form.masterName', input(draft.masterName, set('masterName'), { placeholder: 'mymaster' })) : null,
             draft.type !== 'redis' ? field('form.user', input(draft.user, set('user'), { autoComplete: 'off' })) : null,
-            draft.type === 'mysql' ? field('form.database', input(draft.database, set('database'))) : null,
+            FAMILY[draft.type] === 'mysql' || FAMILY[draft.type] === 'postgres' ? field('form.database', input(draft.database, set('database'), { placeholder: FAMILY[draft.type] === 'postgres' ? 'postgres' : '' })) : null,
             draft.type === 'oracle' ? field('form.serviceName', input(draft.serviceName, set('serviceName'), { placeholder: 'ORCLPDB1' })) : null,
             draft.type === 'oracle' ? field('form.sid', input(draft.sid, set('sid'), { placeholder: 'ORCL' })) : null,
             draft.type === 'oracle' ? field('form.connectString', input(draft.connectString, set('connectString'), { placeholder: '(DESCRIPTION=…)' })) : null,
             draft.type === 'redis' ? field('form.dbIndex', input(draft.db ?? 0, (v) => setDraft((d) => ({ ...d, db: v })), { type: 'number', min: 0 })) : null,
-            draft.type === 'redis' ? field('form.user', input(draft.username, set('username'), { placeholder: '(ACL, optional)' })) : null,
+            draft.type === 'redis' ? field('form.user', input(draft.username, set('username'), { placeholder: t('form.aclOptional') })) : null,
             field('form.password',
               h('input', {
                 className: 'dbb-input', type: 'password', value: password, autoComplete: 'new-password',
@@ -459,13 +605,12 @@ window.__ModuleLoader__.load({
             outcome ? h('div', { className: outcome.ok ? 'dbb-ok' : 'dbb-error' }, outcome.text) : null,
           ),
           h('div', { className: 'dbb-modal-foot' },
-            isEdit ? h('button', { className: 'dbb-btn dbb-btn-danger', disabled: busy !== null, onClick: () => onDelete(initial) }, t('form.delete')) : null,
+            isEdit ? h('button', { type: 'button', className: 'dbb-btn dbb-btn-danger', disabled: busy !== null, onClick: () => onDelete(initial) }, t('form.delete')) : null,
             h('span', { style: { flex: 1 } }),
-            h('button', { className: 'dbb-btn', onClick: onClose, disabled: busy !== null }, t('cancel')),
-            h('button', { className: 'dbb-btn', onClick: () => run('test'), disabled: busy !== null }, busy === 'test' ? t('form.testing') : t('test')),
-            h('button', { className: 'dbb-btn dbb-btn-primary', onClick: () => run('save'), disabled: busy !== null }, busy === 'save' ? '…' : t('save')),
+            h('button', { type: 'button', className: 'dbb-btn', onClick: closeDialog, disabled: busy !== null }, t('cancel')),
+            h('button', { type: 'button', className: 'dbb-btn', onClick: () => run('test'), disabled: busy !== null }, busy === 'test' ? t('form.testing') : t('test')),
+            h('button', { type: 'button', className: 'dbb-btn dbb-btn-primary', onClick: () => run('save'), disabled: busy !== null }, busy === 'save' ? '…' : t('save')),
           ),
-        ),
       )
     }
 
@@ -493,9 +638,12 @@ window.__ModuleLoader__.load({
       // A table view's "query in editor" seeds one generated, auto-run SELECT per click.
       useEffect(() => {
         if (!seed || seed.connId !== conn.id) return
-        const statement = conn.type === 'oracle'
+        const family = FAMILY[conn.type]
+        const statement = family === 'oracle'
           ? `SELECT * FROM (SELECT * FROM "${String(seed.database).replace(/"/g, '""')}"."${String(seed.table).replace(/"/g, '""')}") WHERE ROWNUM <= 100`
-          : `SELECT * FROM \`${String(seed.database).replace(/`/g, '``')}\`.\`${String(seed.table).replace(/`/g, '``')}\` LIMIT 100`
+          : family === 'postgres'
+            ? `SELECT * FROM "${String(seed.database).replace(/"/g, '""')}"."${String(seed.table).replace(/"/g, '""')}" LIMIT 100`
+            : `SELECT * FROM \`${String(seed.database).replace(/`/g, '``')}\`.\`${String(seed.table).replace(/`/g, '``')}\` LIMIT 100`
         setSql(statement)
         runRef.current(statement)
         clearSeed?.()
@@ -504,14 +652,16 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dbb-sql-bar' },
           h('span', { className: allowWrites ? 'dbb-warn-text' : 'dbb-muted' }, allowWrites ? t('sql.writable') : t('sql.readonly')),
           h('span', { style: { flex: 1 } }),
-          result && result.columns?.length > 0
+          result && result.pageable !== false && result.columns?.length > 0
             ? h('span', { className: 'dbb-page' },
                 h('button', { className: 'dbb-btn', onClick: () => run(undefined, page - 1), disabled: running || page === 0 }, '‹ ' + t('result.page.prev')),
                 h('span', { className: 'dbb-muted' }, fmt(t, 'result.page.range', { from: page * pageSize + 1, to: page * pageSize + (result.rowCount ?? 0) }) + (result.truncated ? ' +' : '')),
                 h('button', { className: 'dbb-btn', onClick: () => run(undefined, page + 1), disabled: running || !result.truncated }, t('result.page.next') + ' ›'),
               )
             : null,
-          h('label', { className: 'dbb-muted dbb-page-size' }, t('result.page.size') + ' ',
+          result?.pageable === false
+            ? null
+            : h('label', { className: 'dbb-muted dbb-page-size' }, t('result.page.size') + ' ',
             h('select', { className: 'dbb-input dbb-select-inline', value: pageSize, onChange: (e) => { setPageSize(Number(e.target.value)); setPage(0) } },
               [100, 500, 1000].map((n) => h('option', { key: n, value: n }, n)))),
           h('button', { className: 'dbb-btn dbb-btn-primary', onClick: () => run(undefined, 0), disabled: running }, running ? t('sql.running') : t('sql.run')),
@@ -534,6 +684,7 @@ window.__ModuleLoader__.load({
       const [ddl, setDdl] = useState(null)
       const [indexes, setIndexes] = useState(null)
       const [previewPage, setPreviewPage] = useState(0)
+      const [nonce, setNonce] = useState(0)
       const showDdl = async () => {
         if (ddl !== null) { setDdl(null); return }
         try { setDdl((await call('show-create', { id: conn.id, database, table })).ddl) }
@@ -549,21 +700,22 @@ window.__ModuleLoader__.load({
         ]).then(([cols, prev, idx]) => { if (alive) { setColumns(cols.columns); setPreview(prev); setIndexes(idx.indexes) } })
           .catch((e) => { if (alive) setError(e) })
         return () => { alive = false }
-      }, [conn.id, database, table, previewPage])
+      }, [conn.id, database, table, previewPage, nonce])
       return h('div', { className: 'dbb-tableview' },
         h('div', { className: 'dbb-tableview-head' },
           h('span', { className: 'dbb-tableview-name' }, `${database}.${table}`),
           h('button', { className: 'dbb-btn', onClick: () => onOpenSql(database, table) }, t('table.openInSql')),
-          conn.type === 'mysql' ? h('button', { className: 'dbb-btn', onClick: showDdl }, t('table.ddl')) : null,
+          conn.features?.showCreate ? h('button', { className: 'dbb-btn', onClick: showDdl }, t('table.ddl')) : null,
         ),
         ddl !== null ? h('pre', { className: 'dbb-pre' }, ddl) : null,
         h(ErrorBar, { error: error?.message, onClose: () => setError(null), t }),
+        error ? h('div', null, h('button', { className: 'dbb-btn', onClick: () => setNonce((n) => n + 1) }, t('tree.retry'))) : null,
         columns
           ? h('div', { className: 'dbb-section' },
               h('div', { className: 'dbb-section-title' }, t('table.columns')),
-              h('div', { className: 'dbb-grid-scroll dbb-cols' },
+              h('div', { className: 'dbb-grid-scroll dbb-cols', tabIndex: 0, role: 'region', 'aria-label': t('table.columns') },
                 h('table', { className: 'dbb-grid' },
-                  h('thead', null, h('tr', null, ['', 'Name', 'Type', 'Null', 'Key', 'Default', 'Extra'].map((x, i) => h('th', { key: i }, x)))),
+                  h('thead', null, h('tr', null, ['', t('cols.name'), t('cols.type'), t('cols.null'), t('cols.key'), t('cols.default'), t('cols.extra')].map((x, i) => h('th', { key: i }, x)))),
                   h('tbody', null, columns.map((c, i) =>
                     h('tr', { key: i },
                       h('td', { className: 'dbb-muted' }, i + 1),
@@ -574,13 +726,13 @@ window.__ModuleLoader__.load({
                 ),
               ),
             )
-          : h('div', { className: 'dbb-muted' }, t('tree.loading')),
+          : (error ? null : h('div', { className: 'dbb-muted' }, t('tree.loading'))),
         indexes && indexes.length > 0
           ? h('div', { className: 'dbb-section' },
               h('div', { className: 'dbb-section-title' }, t('table.indexes')),
-              h('div', { className: 'dbb-grid-scroll dbb-cols' },
+              h('div', { className: 'dbb-grid-scroll dbb-cols', tabIndex: 0, role: 'region', 'aria-label': t('table.indexes') },
                 h('table', { className: 'dbb-grid' },
-                  h('thead', null, h('tr', null, ['Name', 'Columns', 'Unique', 'Type'].map((x, i) => h('th', { key: i }, x)))),
+                  h('thead', null, h('tr', null, [t('cols.name'), t('idx.columns'), t('idx.unique'), t('cols.type')].map((x, i) => h('th', { key: i }, x)))),
                   h('tbody', null, indexes.map((idx, i) =>
                     h('tr', { key: i },
                       h('td', null, idx.name),
@@ -603,7 +755,148 @@ window.__ModuleLoader__.load({
                 )
               : null,
           ),
-          preview ? h(ResultGrid, { result: preview, t }) : h('div', { className: 'dbb-muted' }, t('tree.loading')),
+          preview ? h(ResultGrid, { result: preview, t }) : (error ? null : h('div', { className: 'dbb-muted' }, t('tree.loading'))),
+        ),
+      )
+    }
+
+    // ---------- routines view (stored procedures / functions) ----------
+
+    function RoutinesView({ conn, allowWrites, t }) {
+      const [schemas, setSchemas] = useState(null)
+      const [schema, setSchema] = useState(null)
+      const [routines, setRoutines] = useState(null)
+      const [listError, setListError] = useState(null)
+      const [selected, setSelected] = useState(null) // { name, kind, detail }
+      const [source, setSource] = useState(null)
+      const [sourceError, setSourceError] = useState(null)
+      const [argsText, setArgsText] = useState('')
+      const [calling, setCalling] = useState(false)
+      const [callOutcome, setCallOutcome] = useState(null)
+      const reqSeq = useRef(0)
+      const [nonce, setNonce] = useState(0)
+
+      // Schemas (Oracle/PG) or databases (MySQL family) come from the same op the tree uses.
+      useEffect(() => {
+        let alive = true
+        setSchemas(null); setSchema(null); setRoutines(null); setSelected(null); setSource(null); setListError(null)
+        call('list-databases', { id: conn.id })
+          .then((r) => {
+            if (!alive) return
+            setSchemas(r.databases)
+            const first = conn.database && r.databases.includes(conn.database) ? conn.database : r.databases[0]
+            if (first) setSchema(first)
+          })
+          .catch((e) => { if (alive) setListError(e) })
+        return () => { alive = false }
+      }, [conn.id, nonce])
+
+      const loadRoutines = useCallback(async (schemaName) => {
+        if (!schemaName) return
+        setRoutines(null); setListError(null); setSelected(null); setSource(null); setCallOutcome(null)
+        try {
+          const r = await call('list-routines', { id: conn.id, database: schemaName })
+          setRoutines(r.routines)
+        } catch (e) { setListError(e); setRoutines([]) }
+      }, [conn.id])
+
+      useEffect(() => { if (schema) loadRoutines(schema) }, [schema, loadRoutines])
+
+      const openRoutine = useCallback(async (routine) => {
+        const req = ++reqSeq.current
+        setSelected(routine); setSource(null); setSourceError(null); setCallOutcome(null); setArgsText('')
+        try {
+          const r = await call('routine-source', { id: conn.id, database: schema, object: routine.name, kind: routine.kind })
+          if (req === reqSeq.current) setSource(r.ddl)
+        } catch (e) { if (req === reqSeq.current) setSourceError(e) }
+      }, [conn.id, schema])
+
+      const callRoutine = async () => {
+        if (calling || !selected) return
+        let args = []
+        if (argsText.trim() !== '') {
+          try {
+            args = JSON.parse(argsText)
+            if (!Array.isArray(args)) throw new Error('not an array')
+          } catch {
+            setCallOutcome({ ok: false, text: `${t('routine.args')}` })
+            return
+          }
+        }
+        setCalling(true); setCallOutcome(null)
+        try {
+          const r = await call('call-routine', { id: conn.id, database: schema, object: selected.name, args: args.map(String) })
+          const rows = r.rowCount > 0 ? ` · ${fmt(t, 'result.rows', { n: r.rowCount })}` : ''
+          setCallOutcome({ ok: true, text: `${t('routine.done')} · ${fmt(t, 'result.took', { ms: r.tookMs })}${rows}` })
+        } catch (e) {
+          setCallOutcome({ ok: false, text: e.message })
+        } finally {
+          setCalling(false)
+        }
+      }
+
+      const callable = allowWrites && selected?.kind === 'procedure'
+      return h('div', { className: 'dbb-routines' },
+        h('div', { className: 'dbb-sql-bar' },
+          h('label', { className: 'dbb-muted' }, t('routine.schema')),
+          h('select', {
+            className: 'dbb-input dbb-select-inline', value: schema ?? '',
+            onChange: (e) => setSchema(e.target.value),
+          }, (schemas ?? []).map((s) => h('option', { key: s, value: s }, s))),
+          h('button', { className: 'dbb-btn', onClick: () => loadRoutines(schema), disabled: !schema }, t('routine.refresh')),
+          h('span', { style: { flex: 1 } }),
+          allowWrites ? null : h('span', { className: 'dbb-muted' }, t('routine.needWrites')),
+        ),
+        h(ErrorBar, { error: listError?.message, onClose: () => setListError(null), t }),
+        h('div', { className: 'dbb-routines-body' },
+          h('div', { className: 'dbb-routines-list' },
+            schemas === null && listError
+              // First load failed (e.g. connection dropped): offer a retry
+              // instead of a spinner that never resolves.
+              ? h('div', { className: 'dbb-muted dbb-pad' },
+                  h('button', { className: 'dbb-btn', onClick: () => setNonce((n) => n + 1) }, t('tree.retry')))
+              : routines === null
+                ? h('div', { className: 'dbb-muted dbb-pad' }, t('routine.loading'))
+                : routines.length === 0
+                  ? h('div', { className: 'dbb-muted dbb-pad' }, t('routine.empty'))
+                  : routines.map((r) => h('button', {
+                    key: `${r.kind}:${r.name}`, type: 'button',
+                    className: 'dbb-key' + (selected?.name === r.name && selected?.kind === r.kind ? ' dbb-key-active' : ''),
+                    onClick: () => openRoutine(r), title: r.detail ? `${r.name}(${r.detail})` : r.name,
+                  },
+                    h('span', { className: 'dbb-node-label' }, r.name),
+                    ' ',
+                    h('span', { className: 'dbb-badge' }, r.kind),
+                    r.detail && r.kind !== 'package' ? h('span', { className: 'dbb-muted' }, ` (${r.detail})`) : null,
+                  )),
+          ),
+          h('div', { className: 'dbb-routines-detail' },
+            selected === null
+              ? h('div', { className: 'dbb-muted dbb-pad' }, t('routine.select'))
+              : h('div', { className: 'dbb-pad' },
+                  h('div', { className: 'dbb-tableview-head' },
+                    h('span', { className: 'dbb-tableview-name' }, `${schema}.${selected.name}`),
+                    h('span', { className: 'dbb-badge' }, selected.kind),
+                    h('span', { style: { flex: 1 } }),
+                    selected.kind !== 'procedure' ? h('span', { className: 'dbb-muted' }, t('routine.onlyProcedure')) : null,
+                  ),
+                  h(ErrorBar, { error: sourceError?.message, onClose: () => setSourceError(null), t }),
+                  source !== null ? h('pre', { className: 'dbb-pre dbb-routine-src' }, source) : (sourceError ? null : h('div', { className: 'dbb-muted' }, t('routine.loading'))),
+                  h('div', { className: 'dbb-routine-call' },
+                    h('input', {
+                      className: 'dbb-input', value: argsText, disabled: !callable,
+                      placeholder: t('routine.args'),
+                      onChange: (e) => setArgsText(e.target.value),
+                    }),
+                    h('button', {
+                      className: 'dbb-btn dbb-btn-primary', disabled: !callable || calling,
+                      title: !allowWrites ? t('routine.needWrites') : '',
+                      onClick: callRoutine,
+                    }, calling ? t('routine.calling') : t('routine.call')),
+                  ),
+                  callOutcome ? h('div', { className: callOutcome.ok ? 'dbb-ok' : 'dbb-error' }, callOutcome.text) : null,
+                ),
+          ),
         ),
       )
     }
@@ -612,7 +905,7 @@ window.__ModuleLoader__.load({
 
     function RedisValue({ info, t }) {
       if (!info) return null
-      if (info.exists === false) return h('div', { className: 'dbb-muted' }, '(key not found)')
+      if (info.exists === false) return h('div', { className: 'dbb-muted' }, t('redis.keyNotFound'))
       const meta = h('div', { className: 'dbb-result-meta' },
         `${t('redis.type')}: ${info.type} · ${t('redis.ttl')}: ${info.ttl >= 0 ? `${info.ttl}s` : t('redis.noTtl')}`,
         typeof info.length === 'number' ? ` · ${fmt(t, 'redis.length', { n: info.length })}` : '',
@@ -624,18 +917,18 @@ window.__ModuleLoader__.load({
       } else if (info.type === 'hash') {
         const entries = Object.entries(info.value ?? {})
         body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('thead', null, h('tr', null, [h('th', null, 'field'), h('th', null, 'value')])),
+          h('thead', null, h('tr', null, [h('th', null, t('redis.kv.field')), h('th', null, t('redis.kv.value'))])),
           h('tbody', null, entries.map(([k, v]) => h('tr', { key: k }, h('td', null, k), h('td', { title: String(v) }, String(v)))))))
       } else if (info.type === 'list') {
         body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('thead', null, h('tr', null, [h('th', null, '#'), h('th', null, 'value')])),
+          h('thead', null, h('tr', null, [h('th', null, '#'), h('th', null, t('redis.kv.value'))])),
           h('tbody', null, (info.value ?? []).map((v, i) => h('tr', { key: i }, h('td', { className: 'dbb-muted' }, i), h('td', { title: String(v) }, String(v)))))))
       } else if (info.type === 'set') {
         body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
           h('tbody', null, (info.value ?? []).map((v, i) => h('tr', { key: i }, h('td', { title: String(v) }, String(v)))))))
       } else if (info.type === 'zset') {
         body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('thead', null, h('tr', null, [h('th', null, 'member'), h('th', null, 'score')])),
+          h('thead', null, h('tr', null, [h('th', null, t('redis.kv.member')), h('th', null, t('redis.kv.score'))])),
           h('tbody', null, (info.value ?? []).map((e2, i) => h('tr', { key: i }, h('td', null, String(e2.member)), h('td', null, String(e2.score)))))))
       } else {
         body = h('pre', { className: 'dbb-pre' }, JSON.stringify(info.value, null, 2))
@@ -648,8 +941,8 @@ window.__ModuleLoader__.load({
       const { ref, range, onScroll } = useWindowed(keys.length, KEY_ROW_H)
       return h('div', { className: 'dbb-key-window', ref, onScroll },
         h('div', { style: { height: keys.length * KEY_ROW_H, position: 'relative' } },
-          keys.slice(range.start, range.end).map((k, i) => h('div', {
-            key: range.start + i,
+          keys.slice(range.start, range.end).map((k, i) => h('button', {
+            key: range.start + i, type: 'button',
             className: 'dbb-key' + (k === selected ? ' dbb-key-active' : ''),
             style: { position: 'absolute', top: (range.start + i) * KEY_ROW_H, left: 0, right: 0, height: KEY_ROW_H },
             onClick: () => openKey(k), title: k,
@@ -771,7 +1064,16 @@ window.__ModuleLoader__.load({
 .dbb-sub{color:var(--dsw-alias-label-secondary);font-size:12px}
 .dbb-body{display:flex;flex:1;min-height:0}
 .dbb-aside{width:250px;flex:none;border-right:1px solid var(--dsw-alias-border-l1);overflow:auto;background:var(--dsw-alias-bg-layer-1)}
-.dbb-main{flex:1;min-width:0;overflow:auto;display:flex;flex-direction:column}
+.dbb-main{flex:1;min-width:0;overflow:hidden;display:flex;flex-direction:column}
+.dbb-tabs{display:flex;align-items:stretch;gap:2px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);overflow:auto}
+.dbb-tab{display:inline-flex;align-items:center;gap:6px;max-width:220px;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);padding:8px 8px 6px;cursor:pointer;font-size:12px}
+.dbb-tab[aria-selected="true"]{color:var(--dsw-alias-label-primary);border-bottom-color:var(--dsw-alias-brand-primary)}
+.dbb-tab-label{border:none;background:transparent;color:inherit;cursor:pointer;font:inherit;padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbb-tab-close{border:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:0 2px;border-radius:4px;line-height:1}
+.dbb-tab-close:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.dbb-tab-panes{flex:1;min-height:0;display:flex;flex-direction:column}
+.dbb-tab-pane{display:none;flex:1;min-height:0;overflow:auto;flex-direction:column}
+.dbb-tab-pane-active{display:flex}
 .dbb-node{display:flex;align-items:center;gap:4px;padding:5px 8px;cursor:pointer;white-space:nowrap;overflow:hidden}
 .dbb-node:hover{background:var(--dsw-alias-bg-layer-2)}
 .dbb-node-active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
@@ -815,6 +1117,9 @@ window.__ModuleLoader__.load({
 .dbb-grid{border-collapse:collapse;width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .dbb-grid th{position:sticky;top:0;background:var(--dsw-alias-bg-layer-2);text-align:left;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);white-space:nowrap}
 .dbb-grid td{padding:4px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbb-grid-wide td{white-space:pre-wrap;max-width:none;vertical-align:top}
+.dbb-grid-scroll-wide{max-height:none}
+.dbb-plan{max-height:40vh}
 .dbb-grid tr:hover td{background:var(--dsw-alias-bg-layer-1)}
 .dbb-null{color:var(--dsw-alias-label-secondary);font-style:italic}
 .dbb-result-meta{color:var(--dsw-alias-label-secondary);font-size:12px}
@@ -832,8 +1137,10 @@ window.__ModuleLoader__.load({
 .dbb-section{margin-top:8px}
 .dbb-section-title{font-weight:600;margin-bottom:6px}
 .dbb-warn-text{color:var(--dsw-alias-state-warn-primary);font-size:12px}
-.dbb-modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000}
-.dbb-modal{width:460px;max-height:86vh;overflow:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:16px}
+.dbb-modal{width:460px;max-width:calc(100vw - 32px);max-height:86vh;overflow:auto;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:16px}
+.dbb-modal:not([open]){display:none}
+dialog.dbb-modal:modal{overscroll-behavior:contain}
+.dbb-modal::backdrop{background:var(--dsw-alias-bg-mask-1);overflow:hidden;overscroll-behavior:contain}
 .dbb-modal-title{font-size:15px;font-weight:600;margin-bottom:12px}
 .dbb-modal-body{display:flex;flex-direction:column;gap:10px}
 .dbb-field{display:flex;flex-direction:column;gap:4px}
@@ -846,13 +1153,23 @@ window.__ModuleLoader__.load({
 .dbb-redis-body{display:flex;flex:1;min-height:0;gap:10px}
 .dbb-redis-keys{width:300px;flex:none;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;display:flex;flex-direction:column}
 .dbb-key-window{flex:1;overflow:auto;position:relative}
-.dbb-key{padding:4px 10px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbb-key{display:block;width:100%;box-sizing:border-box;border:none;background:none;color:inherit;text-align:left;padding:4px 10px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dbb-key:hover{background:var(--dsw-alias-bg-layer-2)}
 .dbb-key-active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .dbb-redis-value{flex:1;min-width:0;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px}
 .dbb-redis-value-inner .dbb-grid-scroll{max-height:none;border:none;border-radius:0}
 .dbb-pre{margin:8px 0;padding:8px;background:var(--dsw-alias-bg-layer-1);border-radius:6px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .dbb-welcome{padding:40px 24px;color:var(--dsw-alias-label-secondary)}
+.dbb-pane-col{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
+.dbb-subtabs{display:flex;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dbb-subtab{border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);padding:6px 10px 5px;cursor:pointer;font-size:12px}
+.dbb-subtab[aria-selected="true"]{color:var(--dsw-alias-label-primary);border-bottom-color:var(--dsw-alias-brand-primary)}
+.dbb-routines{display:flex;flex-direction:column;flex:1;min-height:0;padding:8px 12px;gap:8px;overflow:hidden}
+.dbb-routines-body{display:flex;flex:1;min-height:0;gap:10px}
+.dbb-routines-list{width:320px;flex:none;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px}
+.dbb-routines-detail{flex:1;min-width:0;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px}
+.dbb-routine-src{max-height:44vh}
+.dbb-routine-call{display:flex;gap:8px;margin-top:8px}
 .dbb-welcome h2{color:var(--dsw-alias-label-primary);margin:0 0 8px}
 `
 
@@ -861,41 +1178,75 @@ window.__ModuleLoader__.load({
       const [data, setData] = useState(null) // { connections, allowWrites, maxRows }
       const [fatal, setFatal] = useState(null)
       const [editing, setEditing] = useState(null) // null | {} | connection
-      const [selected, setSelectedRaw] = useState(null) // {kind:'conn'|'table', ...}
+      const [tabs, setTabs] = useState([])
+      const [activeId, setActiveId] = useState(null)
+      const [views, setViews] = useState({})
+      const tabsRef = useRef([])
+      const viewsRef = useRef({})
+      const activeRef = useRef(null)
       const restoredRef = useRef(false)
-      const setSelected = (sel) => {
-        viewState.selected = sel && { kind: sel.kind, id: sel.kind === 'conn' ? sel.id : sel.conn.id, database: sel.database, table: sel.table }
-        setSelectedRaw(sel)
+      const publishTabs = (nextTabs, nextActive, nextViews) => {
+        tabsRef.current = nextTabs
+        viewsRef.current = nextViews
+        activeRef.current = nextActive
+        viewState.tabs = nextTabs
+        viewState.activeId = nextActive
+        viewState.views = nextViews
+        setTabs(nextTabs)
+        setViews(nextViews)
+        setActiveId(nextActive)
+      }
+      const focusTab = (id, view) => {
+        const nextTabs = tabsRef.current.includes(id) ? tabsRef.current : [...tabsRef.current, id]
+        const nextViews = view ? { ...viewsRef.current, [id]: view } : viewsRef.current
+        publishTabs(nextTabs, id, nextViews)
+      }
+      const closeTab = (id) => {
+        const index = tabsRef.current.indexOf(id)
+        const nextTabs = tabsRef.current.filter((item) => item !== id)
+        const nextActive = activeRef.current === id ? (nextTabs[Math.max(0, index - 1)] ?? null) : activeRef.current
+        const nextViews = { ...viewsRef.current }
+        delete nextViews[id]
+        publishTabs(nextTabs, nextActive, nextViews)
       }
       const [tree, setTree] = useState({}) // nodeKey -> {expanded, loading, error, items}
-      const [openSql, setOpenSql] = useState(null) // {conn, database, table} force sql view
 
       const refresh = useCallback(async () => {
         try {
           const v = await loadConnections()
           setData(v); setFatal(null)
-          // Re-resolve the selection against fresh connection objects.
-          setSelectedRaw((sel) => {
-            if (!sel) return sel
-            const id = sel.conn?.id ?? sel.id
-            const fresh = v.connections.find((c) => c.id === id)
-            return fresh ? { ...sel, conn: fresh } : null
-          })
+          const live = new Set(v.connections.map((c) => c.id))
+          const nextTabs = tabsRef.current.filter((id) => live.has(id))
+          if (nextTabs.length !== tabsRef.current.length || (activeRef.current && !live.has(activeRef.current))) {
+            const nextViews = { ...viewsRef.current }
+            for (const id of Object.keys(nextViews)) if (!live.has(id)) delete nextViews[id]
+            const nextActive = nextTabs.includes(activeRef.current) ? activeRef.current : (nextTabs[0] ?? null)
+            publishTabs(nextTabs, nextActive, nextViews)
+          }
         } catch (e) { setFatal(e) }
       }, [])
 
       useEffect(() => { refresh() }, [refresh])
+
+      // Keep the selected connection tab visible when the strip overflows
+      // (selection can change without the pointer, e.g. after a tree click).
+      const rootRef = useRef(null)
+      useEffect(() => {
+        rootRef.current?.querySelector('.dbb-tab[aria-selected="true"]')
+          ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', container: 'nearest' })
+      }, [activeId])
 
       // Remount restore: jump back to the previously selected connection/table
       // once the fresh connection list arrives (data itself is always refetched).
       useEffect(() => {
         if (!data || restoredRef.current) return
         restoredRef.current = true
-        const vs = viewState.selected
-        if (!vs) return
-        const conn = data.connections.find((c) => c.id === vs.id)
-        if (!conn) return
-        setSelectedRaw(vs.kind === 'table' ? { kind: 'table', conn, database: vs.database, table: vs.table } : { kind: 'conn', id: conn.id, conn })
+        const ids = (viewState.tabs ?? []).filter((id) => data.connections.some((c) => c.id === id))
+        if (ids.length === 0) return
+        const nextViews = {}
+        for (const id of ids) if (viewState.views?.[id]) nextViews[id] = viewState.views[id]
+        const nextActive = ids.includes(viewState.activeId) ? viewState.activeId : ids[0]
+        publishTabs(ids, nextActive, nextViews)
       }, [data])
 
       const nodeKey = (...parts) => parts.join('￨')
@@ -903,7 +1254,9 @@ window.__ModuleLoader__.load({
 
       const loadDatabases = async (conn) => {
         const key = nodeKey('conn', conn.id)
-        patchTree(key, { expanded: true, loading: true, error: null })
+        // Clear needStart: once a real load begins the node is no longer in
+        // the "stopped, offer the start button" state, or collapse stays blocked.
+        patchTree(key, { expanded: true, loading: true, error: null, needStart: false })
         try {
           const r = await call('list-databases', { id: conn.id })
           patchTree(key, { loading: false, items: r.databases })
@@ -912,8 +1265,10 @@ window.__ModuleLoader__.load({
       const toggleDatabases = (conn) => {
         const key = nodeKey('conn', conn.id)
         const node = tree[key] ?? {}
-        // A failed load keeps the node expanded; toggling then retries instead of collapsing.
-        if (node.expanded && !node.error && !node.needStart) { patchTree(key, { expanded: false }); return }
+        // A failed load keeps the node expanded; toggling then retries instead
+        // of collapsing. needStart is collapse-safe: re-expanding a stopped
+        // connection just offers the start button again.
+        if (node.expanded && !node.error) { patchTree(key, { expanded: false }); return }
         if (conn.status !== 'open') {
           // Manual-start model: expanding a stopped connection offers the start button.
           patchTree(key, { expanded: true, loading: false, error: null, needStart: true })
@@ -975,7 +1330,7 @@ window.__ModuleLoader__.load({
             setFatal(callError ?? new Error(`delete-connection ${conn.id} did not apply`))
             return
           }
-          setSelected((sel) => (sel && (sel.conn?.id ?? sel.id) === conn.id) ? null : sel)
+          closeTab(conn.id)
         } catch (e) { setFatal(e) }
       }
 
@@ -999,8 +1354,7 @@ window.__ModuleLoader__.load({
         const key = nodeKey('conn', conn.id)
         const node = tree[key] ?? {}
         const isSql = conn.type !== 'redis'
-        const sel = selected
-        const connSelected = sel?.kind === 'conn' && sel.id === conn.id
+        const connSelected = activeId === conn.id
         const trailing = h('span', { className: 'dbb-row-actions' },
           h('button', {
             className: 'dbb-icon-btn' + (conn.status === 'open' ? ' dbb-icon-on' : ''),
@@ -1017,14 +1371,15 @@ window.__ModuleLoader__.load({
           key: conn.id, depth: 0, label: conn.label, t,
           trailing,
           badge: h('span', { className: 'dbb-conn-badge' },
-            h('span', { className: 'dbb-dot ' + (conn.status === 'open' ? 'dbb-dot-open' : ''), title: conn.status === 'open' ? 'open' : 'stopped' }),
+            h('span', { className: 'dbb-dot ' + (conn.status === 'open' ? 'dbb-dot-open' : ''), title: conn.status === 'open' ? t('conn.status.open') : t('conn.status.stopped') }),
             h(TypeBadge, { type: conn.type })),
           expanded: node.expanded, loading: node.loading, error: node.error,
           selected: connSelected,
           onToggle: isSql ? () => toggleDatabases(conn) : undefined,
           onClick: () => {
-            setSelected({ kind: 'conn', id: conn.id, conn })
-            setOpenSql(null)
+            // No view argument: an already-open tab keeps what it shows (a
+            // table view must not snap back to the SQL editor on a row click).
+            focusTab(conn.id)
             if (isSql && !(tree[key] ?? {}).expanded) toggleDatabases(conn)
           },
         }, isSql && node.expanded && node.needStart && conn.status !== 'open'
@@ -1047,41 +1402,99 @@ window.__ModuleLoader__.load({
           ? h(TableItems, {
               items: node.items, t,
               renderItem: (tb) => {
-                const sel = selected
-                const active = sel?.kind === 'table' && sel.conn.id === conn.id && sel.database === database && sel.table === tb.name
+                const view = views[conn.id]
+                const active = activeId === conn.id && view?.kind === 'table' && view.database === database && view.table === tb.name
                 return h(TreeNode, {
                   key: key + '￨' + tb.name, depth: 2, label: tb.name, t,
                   badge: tb.kind === 'view' ? h('span', { className: 'dbb-badge' }, 'view') : null,
                   selected: active,
-                  onClick: () => { setSelected({ kind: 'table', conn, database, table: tb.name }); setOpenSql(null) },
+                  onClick: () => focusTab(conn.id, { kind: 'table', database, table: tb.name }),
                 })
               },
             })
           : null)
       }
 
-      const renderMain = () => {
-        if (!selected) {
-          return h('div', { className: 'dbb-welcome' },
-            h('h2', null, t('welcome.title')),
-            h('p', null, t('welcome.body')))
-        }
-        if (selected.kind === 'table') {
+      const renderTabBody = (conn) => {
+        const view = views[conn.id] ?? { kind: conn.type === 'redis' ? 'redis' : 'sql' }
+        if (view.kind === 'table') {
           return h(TableView, {
-            key: `${selected.conn.id}/${selected.database}/${selected.table}`,
-            conn: selected.conn, database: selected.database, table: selected.table, t,
-            onOpenSql: (database, table) => {
-              setOpenSql({ connId: selected.conn.id, database, table })
-              setSelected({ kind: 'conn', id: selected.conn.id, conn: selected.conn })
-            },
+            key: `${conn.id}/${view.database}/${view.table}`,
+            conn, database: view.database, table: view.table, t,
+            onOpenSql: (database, table) => focusTab(conn.id, { kind: 'sql', seed: { connId: conn.id, database, table } }),
           })
         }
-        const conn = selected.conn
         if (conn.type === 'redis') return h(RedisView, { key: conn.id, conn, t })
-        return h(SqlPane, { key: conn.id, conn, seed: openSql, clearSeed: () => setOpenSql(null), allowWrites: data?.allowWrites === true, t })
+        // Stored procedures only exist where the vendor supports them; the
+        // feature matrix hides this sub-tab entirely for TDSQL / GoldenDB.
+        const strip = conn.features?.procedures
+          ? h('div', { className: 'dbb-subtabs', role: 'tablist', 'aria-label': conn.label || conn.id },
+              h('button', {
+                type: 'button', role: 'tab', 'aria-selected': view.kind !== 'routines' ? 'true' : 'false',
+                className: 'dbb-subtab',
+                onClick: () => focusTab(conn.id, { kind: 'sql' }),
+              }, t('tab.sql')),
+              h('button', {
+                type: 'button', role: 'tab', 'aria-selected': view.kind === 'routines' ? 'true' : 'false',
+                className: 'dbb-subtab',
+                onClick: () => focusTab(conn.id, { kind: 'routines' }),
+              }, t('tab.routines')),
+            )
+          : null
+        if (view.kind === 'routines' && conn.features?.procedures) {
+          return h('div', { className: 'dbb-pane-col' },
+            strip,
+            h(RoutinesView, { key: `${conn.id}/routines`, conn, allowWrites: data?.allowWrites === true, t }),
+          )
+        }
+        return h('div', { className: 'dbb-pane-col' },
+          strip,
+          h(SqlPane, {
+            key: conn.id, conn, seed: view.seed ?? null,
+            clearSeed: () => focusTab(conn.id, { kind: 'sql' }),
+            allowWrites: data?.allowWrites === true, t,
+          }),
+        )
       }
 
-      return h('div', { className: 'dbb-root' },
+      const renderMain = () => {
+        const open = tabs.map((id) => data?.connections.find((c) => c.id === id)).filter(Boolean)
+        return h(React.Fragment, null,
+          open.length > 0
+            ? h('div', { className: 'dbb-tabs', role: 'tablist' },
+                open.map((conn) => h('div', {
+                  key: conn.id,
+                  className: 'dbb-tab' + (conn.id === activeId ? ' dbb-tab-active' : ''),
+                  role: 'tab',
+                  'aria-selected': conn.id === activeId,
+                },
+                  h('button', {
+                    className: 'dbb-tab-label',
+                    onClick: () => focusTab(conn.id),
+                  }, conn.label || conn.id),
+                  h('button', {
+                    className: 'dbb-tab-close',
+                    'aria-label': t('tab.close'),
+                    title: t('tab.close'),
+                    onClick: () => closeTab(conn.id),
+                  }, '×'),
+                )))
+            : null,
+          h('div', { className: 'dbb-tab-panes' },
+            open.length === 0
+              ? h('div', { className: 'dbb-welcome' },
+                  h('h2', null, t('welcome.title')),
+                  h('p', null, t('tab.empty')))
+              : open.map((conn) => h('div', {
+                  key: conn.id,
+                  className: 'dbb-tab-pane' + (conn.id === activeId ? ' dbb-tab-pane-active' : ''),
+                  role: 'tabpanel',
+                }, renderTabBody(conn))),
+          ),
+        )
+      }
+
+      return h('div', { className: 'dbb-root', ref: rootRef },
         h('style', null, CSS),
         h('div', { className: 'dbb-head' },
           h('span', { className: 'dbb-title' }, t('panel')),
@@ -1119,7 +1532,7 @@ window.__ModuleLoader__.load({
                   const v = await loadConnections()
                   setData(v); setFatal(null)
                   const saved = v.connections.find((c) => c.id === id)
-                  if (saved) setSelected({ kind: 'conn', id: saved.id, conn: saved })
+                  if (saved) focusTab(saved.id, { kind: saved.type === 'redis' ? 'redis' : 'sql' })
                 } catch { await refresh() }
               },
               onSaveUncertain: verifySaved,

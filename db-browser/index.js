@@ -24,9 +24,53 @@ function credentialRecordKey(id) {
   if (!CREDENTIAL_KEY_SEGMENT.test(segment)) fail('bad-request', 'connection id cannot be stored as a credential key')
   return `${CREDENTIAL_SCOPE}/${segment}`
 }
-const SQL_TYPES = new Set(['mysql', 'oracle'])
-const ALL_TYPES = new Set(['mysql', 'oracle', 'redis'])
-const DEFAULT_PORT = { mysql: 3306, oracle: 1521, redis: 6379, sentinel: 26379 }
+/**
+ * Connection types are vendor-specific (mysql vs tdsql-mysql vs goldendb …),
+ * while drivers and SQL syntax follow the engine family. Features that differ
+ * between vendors of one family (stored procedures are the known case: TDSQL
+ * and GoldenDB do not support them) are gated by the feature matrix below.
+ */
+const FAMILY = {
+  mysql: 'mysql',
+  'tdsql-mysql': 'mysql',
+  goldendb: 'mysql',
+  postgres: 'postgres',
+  'tdsql-pg': 'postgres',
+  oracle: 'oracle',
+  redis: 'redis',
+}
+const SQL_TYPES = new Set(['mysql', 'tdsql-mysql', 'goldendb', 'postgres', 'tdsql-pg', 'oracle'])
+const ALL_TYPES = new Set([...SQL_TYPES, 'redis'])
+const DEFAULT_PORT = { mysql: 3306, postgres: 5432, oracle: 1521, redis: 6379, sentinel: 26379 }
+
+/**
+ * Per-type capability defaults. Anything the database itself cannot do stays
+ * off even when an operator forces it on in `features` (the underlying call
+ * will still fail at the server); the flags only control what the panel and
+ * the agent tools offer. Operator overrides live in the plugin config:
+ *   features: { goldendb: { procedures: true } }
+ */
+const DEFAULT_FEATURES = {
+  mysql: { showCreate: true, explain: true, procedures: true },
+  'tdsql-mysql': { showCreate: true, explain: true, procedures: false },
+  goldendb: { showCreate: true, explain: true, procedures: false },
+  postgres: { showCreate: false, explain: true, procedures: true },
+  'tdsql-pg': { showCreate: false, explain: true, procedures: false },
+  oracle: { showCreate: false, explain: true, procedures: true },
+}
+
+/** Merge operator overrides over the defaults; unknown keys are ignored. */
+export function resolveFeatures(type, overrides) {
+  const base = DEFAULT_FEATURES[type] ?? {}
+  const extra = overrides && typeof overrides === 'object' ? overrides[type] : null
+  const out = { ...base }
+  if (extra && typeof extra === 'object') {
+    for (const key of ['showCreate', 'explain', 'procedures']) {
+      if (typeof extra[key] === 'boolean') out[key] = extra[key]
+    }
+  }
+  return out
+}
 
 /** First keyword gate for read-only SQL. */
 const READONLY_HEAD = /^[\s(]*(?:\/\*[\s\S]*?\*\/\s*|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)\s*)*(select|show|desc|describe|explain|with)\b/i
@@ -93,7 +137,7 @@ const HostConfig = Schema.object({
 
 const ConnectionConfig = Schema.object({
   id: Schema.string().required(),
-  type: Schema.union(['mysql', 'oracle', 'redis']).required(),
+  type: Schema.union([...ALL_TYPES]).required(),
   label: Schema.string(),
   hosts: Schema.array(HostConfig).default([]),
   user: Schema.string(),
@@ -107,6 +151,13 @@ const ConnectionConfig = Schema.object({
   username: Schema.string(),
 })
 
+/** All flags optional: each one falls back to DEFAULT_FEATURES for its type. */
+const FeatureOverride = Schema.object({
+  showCreate: Schema.boolean(),
+  explain: Schema.boolean(),
+  procedures: Schema.boolean(),
+})
+
 /**
  * Validated by Cordis before apply. Defaults match the previous in-code fallbacks,
  * so an existing profile that omits a field keeps the same runtime values.
@@ -115,7 +166,16 @@ export const Config = Schema.object({
   maxRows: Schema.number().min(1).max(10000).default(500),
   queryTimeoutMs: Schema.number().min(1).default(30000),
   allowWrites: Schema.boolean().default(false),
+  poolMax: Schema.number().min(1).max(50).default(4),
   oracleClientLib: Schema.string(),
+  features: Schema.object({
+    mysql: FeatureOverride,
+    'tdsql-mysql': FeatureOverride,
+    goldendb: FeatureOverride,
+    postgres: FeatureOverride,
+    'tdsql-pg': FeatureOverride,
+    oracle: FeatureOverride,
+  }).default({}),
   connections: Schema.array(ConnectionConfig).default([]),
 })
 
@@ -170,12 +230,13 @@ function normalizeConnection(raw) {
   if (!id) fail('bad-request', 'connection.id must be 1-64 chars of [A-Za-z0-9_.-]')
   const type = ALL_TYPES.has(raw.type) ? raw.type : null
   if (!type) fail('bad-request', `connection.type must be one of ${[...ALL_TYPES].join('/')}`)
+  const family = FAMILY[type]
   const out = {
     id,
     type,
     label: typeof raw.label === 'string' && raw.label.trim() !== '' ? raw.label.trim() : id,
   }
-  if (type === 'redis') {
+  if (family === 'redis') {
     const mode = ['standalone', 'sentinel', 'cluster'].includes(raw.mode) ? raw.mode : 'standalone'
     out.mode = mode
     out.hosts = normalizeHosts(raw.hosts, mode === 'sentinel' ? DEFAULT_PORT.sentinel : DEFAULT_PORT.redis)
@@ -188,11 +249,12 @@ function normalizeConnection(raw) {
     if (typeof raw.username === 'string' && raw.username !== '') out.username = raw.username
     return out
   }
-  out.hosts = normalizeHosts(raw.hosts, DEFAULT_PORT[type])
+  out.hosts = normalizeHosts(raw.hosts, DEFAULT_PORT[family])
   if (out.hosts.length === 0) fail('bad-request', 'connection needs at least one host')
   if (typeof raw.user !== 'string' || raw.user === '') fail('bad-request', 'connection.user is required')
   out.user = raw.user
-  if (type === 'mysql') {
+  if (family === 'mysql' || family === 'postgres') {
+    // postgres: the database to open (the driver default is "postgres" when omitted).
     if (typeof raw.database === 'string' && raw.database !== '') out.database = raw.database
   } else {
     // oracle: a full connectString (descriptor with its own ADDRESS_LIST
@@ -211,9 +273,9 @@ function normalizeConnection(raw) {
 /** Connection shape the panel and tools may see: no secret fields exist here by construction. */
 function sanitize(c) {
   const { id, type, label } = c
-  const base = { id, type, label, hosts: c.hosts }
-  if (c.type === 'mysql') return { ...base, user: c.user, database: c.database ?? null }
-  if (c.type === 'oracle') return { ...base, user: c.user, serviceName: c.serviceName ?? null, sid: c.sid ?? null, connectString: c.connectString ?? null }
+  const base = { id, type, family: FAMILY[type], label, hosts: c.hosts }
+  if (FAMILY[type] === 'mysql' || FAMILY[type] === 'postgres') return { ...base, user: c.user, database: c.database ?? null }
+  if (type === 'oracle') return { ...base, user: c.user, serviceName: c.serviceName ?? null, sid: c.sid ?? null, connectString: c.connectString ?? null }
   return { ...base, mode: c.mode, db: c.db ?? 0, username: c.username ?? null, masterName: c.masterName ?? null }
 }
 
@@ -256,11 +318,23 @@ function paginateSelect(sql, dialect, offset, cap) {
       ? `SELECT * FROM (${sql}) AS dbb_q LIMIT ${offset}, ${fetchN}`
       : `SELECT * FROM (${sql}) AS dbb_q LIMIT ${fetchN}`
   }
+  if (dialect === 'postgres') {
+    return `SELECT * FROM (${sql}) AS dbb_q LIMIT ${fetchN} OFFSET ${offset}`
+  }
   // Oracle identifiers must start with a letter — no leading underscore.
   return `SELECT * FROM (SELECT dbb_q.*, ROWNUM dbb_rn FROM (${sql}) dbb_q WHERE ROWNUM <= ${offset + fetchN}) WHERE dbb_rn > ${offset}`
 }
 
 const SELECT_HEAD = /^[\s(]*(?:\/\*[\s\S]*?\*\/\s*|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)\s*)*(select|with)\b/i
+
+/** How a user statement should be presented: paged rows, a plan, a catalog, or a write. */
+export function statementKind(sql) {
+  const word = String(sql).match(READONLY_HEAD)?.[1]?.toLowerCase()
+  if (word === 'explain') return 'plan'
+  if (word === 'show' || word === 'desc' || word === 'describe') return 'catalog'
+  if (word === 'select' || word === 'with') return 'query'
+  return 'write'
+}
 
 /** Fold per-column index rows into one entry per index. */
 function groupIndexes(rows) {
@@ -284,8 +358,11 @@ class DbCore {
     this.maxRows = Number.isInteger(config?.maxRows) && config.maxRows > 0 ? Math.min(config.maxRows, 10000) : 500
     this.queryTimeoutMs = Number.isInteger(config?.queryTimeoutMs) && config.queryTimeoutMs > 0 ? config.queryTimeoutMs : 30000
     this.allowWrites = config?.allowWrites === true
+    this.poolMax = Number.isInteger(config?.poolMax) && config.poolMax >= 1 ? Math.min(config.poolMax, 50) : 4
+    this.featureOverrides = config?.features && typeof config.features === 'object' ? config.features : {}
     this.connections = new Map()
     this.sessions = new Map()
+    this.starting = new Map()
     for (const raw of Array.isArray(config?.connections) ? config.connections : []) {
       try {
         const c = normalizeConnection(raw)
@@ -297,8 +374,12 @@ class DbCore {
     }
   }
 
+  featuresOf(c) {
+    return resolveFeatures(c.type, this.featureOverrides)
+  }
+
   list() {
-    return [...this.connections.values()].map(sanitize)
+    return [...this.connections.values()].map((c) => ({ ...sanitize(c), features: this.featuresOf(c) }))
   }
 
   get(id) {
@@ -362,7 +443,12 @@ class DbCore {
     return this.sessions.has(id) ? 'open' : 'stopped'
   }
 
-  /** Open one persistent MySQL handle (multi-host failover on (re)connect). */
+  /**
+   * Open one persistent MySQL connection pool (multi-host failover when the
+   * pool is (re)created; individual dead connections are re-established by
+   * mysql2 itself). The pool exposes the same query/execute API as a single
+   * connection, so `client()` just returns it.
+   */
   async openMysqlHandle(c, passwordOverride) {
     let mysql
     try {
@@ -371,45 +457,111 @@ class DbCore {
       fail('driver-missing', 'The mysql2 driver is not installed with the bundle')
     }
     const password = passwordOverride ?? await this.passwordOf(c.id)
-    const connect = async () => {
+    const core = this
+    const create = async () => {
       let lastError
       for (const host of c.hosts) {
+        const pool = mysql.createPool({
+          host: host.host,
+          port: host.port,
+          user: c.user,
+          password,
+          database: c.database,
+          connectTimeout: 8000,
+          waitForConnections: true,
+          connectionLimit: core.poolMax,
+          queueLimit: 0,
+          multipleStatements: false,
+          dateStrings: true,
+          supportBigNumbers: true,
+          bigNumberStrings: true, // snowflake IDs exceed 2^53; keep them exact
+        })
         try {
-          return await mysql.createConnection({
-            host: host.host,
-            port: host.port,
-            user: c.user,
-            password,
-            database: c.database,
-            connectTimeout: 8000,
-            multipleStatements: false,
-            dateStrings: true,
-            supportBigNumbers: true,
-            bigNumberStrings: true, // snowflake IDs exceed 2^53; keep them exact
-          })
+          // Probe once so a bad host/credential fails fast instead of on first use.
+          await withTimeout(pool.query('SELECT 1'), 10000, () => pool.end().catch(() => {}))
+          return pool
         } catch (error) {
           lastError = error
+          try { await pool.end() } catch { /* half-open pool */ }
         }
       }
-      fail('connect-failed', `MySQL connect failed on ${c.hosts.map((h) => `${h.host}:${h.port}`).join(', ')}: ${lastError?.message ?? 'unknown error'}`)
+      fail('connect-failed', `${c.type} connect failed on ${c.hosts.map((h) => `${h.host}:${h.port}`).join(', ')}: ${lastError?.message ?? 'unknown error'}`)
     }
-    let conn = await connect()
-    const core = this
+    let pool = await create()
     return {
-      client: () => conn,
+      client: () => pool,
       async reopen() {
         if (core.closed) return
-        try { conn.destroy() } catch { /* already dead */ }
+        try { await pool.end() } catch { /* already dead */ }
         if (core.closed) return
-        conn = await connect()
+        pool = await create()
       },
       async close() {
-        try { conn.destroy() } catch { /* already dead */ }
+        try { await pool.end() } catch { /* already dead */ }
       },
     }
   }
 
-  /** Open one persistent Oracle handle (Thin first, Thick fallback for pre-12.1). */
+  /** Open one persistent PostgreSQL pool (covers TDSQL-PG; multi-host failover on (re)create). */
+  async openPostgresHandle(c, passwordOverride) {
+    let pg
+    try {
+      pg = (await import('pg')).default
+    } catch {
+      fail('driver-missing', 'The pg driver is not installed with the bundle')
+    }
+    // BIGINT comes back as a JS number by default and snowflake-style IDs
+    // exceed 2^53; keep int8 exact by reading it as a string. Global to the
+    // pg module, harmless to set on every pool.
+    pg.types.setTypeParser(20, (value) => value)
+    const password = passwordOverride ?? await this.passwordOf(c.id)
+    const core = this
+    const create = async () => {
+      let lastError
+      for (const host of c.hosts) {
+        const pool = new pg.Pool({
+          host: host.host,
+          port: host.port,
+          user: c.user,
+          password,
+          database: c.database ?? 'postgres',
+          max: core.poolMax,
+          connectionTimeoutMillis: 8000,
+          idleTimeoutMillis: 60000,
+          keepAlive: true,
+        })
+        // Idle pooled clients must not tear the panel down when a server drops them.
+        pool.on('error', () => {})
+        try {
+          await withTimeout(pool.query('SELECT 1'), 10000, () => pool.end().catch(() => {}))
+          return pool
+        } catch (error) {
+          lastError = error
+          try { await pool.end() } catch { /* half-open pool */ }
+        }
+      }
+      fail('connect-failed', `${c.type} connect failed on ${c.hosts.map((h) => `${h.host}:${h.port}`).join(', ')}: ${lastError?.message ?? 'unknown error'}`)
+    }
+    let pool = await create()
+    return {
+      client: () => pool,
+      async reopen() {
+        if (core.closed) return
+        try { await pool.end() } catch { /* already dead */ }
+        if (core.closed) return
+        pool = await create()
+      },
+      async close() {
+        try { await pool.end() } catch { /* already dead */ }
+      },
+    }
+  }
+
+  /**
+   * Open one persistent Oracle pool (Thin first, Thick fallback for pre-12.1).
+   * Connections are checked out per operation via `run(fn)` and returned to
+   * the pool, so concurrent panel/agent work does not queue behind one socket.
+   */
   async openOracleHandle(c, passwordOverride) {
     let oracledb
     try {
@@ -418,47 +570,57 @@ class DbCore {
       fail('driver-missing', 'The oracledb driver is not installed with the bundle')
     }
     const password = passwordOverride ?? await this.passwordOf(c.id)
-    const connectOnce = async () => {
-      const attempt = oracledb.getConnection({ user: c.user, password, connectString: this.oracleConnectString(c), connectTimeout: 8 })
+    const core = this
+    const createPool = async () => {
+      const attempt = oracledb.createPool({
+        user: c.user,
+        password,
+        connectString: this.oracleConnectString(c),
+        poolMin: 0,
+        poolMax: core.poolMax,
+        poolIncrement: 1,
+        poolTimeout: 60,
+        connectTimeout: 8,
+      })
       try {
         return await withTimeout(attempt, 10000)
       } catch (error) {
-        // A timed-out race can still resolve later; close that orphan.
-        attempt.then((orphan) => orphan.close().catch(() => {})).catch(() => {})
+        attempt.then((orphan) => orphan.close(0).catch(() => {})).catch(() => {})
         throw error
       }
     }
-    const connect = async () => {
+    const create = async () => {
       try {
-        return await connectOnce()
+        return await createPool()
       } catch (error) {
         // NJS-138: the server predates Thin mode (pre-12.1) — retry through
         // the Oracle Instant Client (Thick mode) when one is available.
         if (oracledb.thin && (error?.code === 'NJS-138' || /NJS-138/.test(String(error?.message ?? '')))) {
           ensureOracleThick(oracledb, this.oracleClientLib)
-          return connectOnce()
+          return createPool()
         }
-        throw error
+        fail('connect-failed', `Oracle connect failed (${this.oracleConnectString(c)}): ${error?.message ?? 'unknown error'}`)
       }
     }
-    let conn
-    try {
-      conn = await connect()
-    } catch (error) {
-      fail('connect-failed', `Oracle connect failed (${this.oracleConnectString(c)}): ${error?.message ?? 'unknown error'}`)
-    }
-    const core = this
+    let pool = await create()
     return {
       driver: oracledb,
-      client: () => conn,
+      async run(fn) {
+        const conn = await pool.getConnection()
+        try {
+          return await fn(conn)
+        } finally {
+          try { await conn.close() } catch { /* return to pool best effort */ }
+        }
+      },
       async reopen() {
         if (core.closed) return
-        try { await conn.close() } catch { /* already dead */ }
+        try { await pool.close(0) } catch { /* already dead */ }
         if (core.closed) return
-        conn = await connect()
+        pool = await create()
       },
       async close() {
-        try { await conn.close() } catch { /* already dead */ }
+        try { await pool.close(5) } catch { /* already dead */ }
       },
     }
   }
@@ -535,7 +697,8 @@ class DbCore {
 
   isConnectionLoss(error) {
     const text = `${error?.code ?? ''} ${error?.errorNum ?? ''} ${error?.message ?? ''}`
-    return /PROTOCOL_CONNECTION_LOST|PROTOCOL_ENQUEUE_AFTER_FATAL|ECONNRESET|EPIPE|ETIMEDOUT|DPI-1010|DPI-1080|NJS-50\d|ORA-0311[34]|ORA-03135|ORA-01012/i.test(text)
+    // MySQL protocol codes, pg SQLSTATE class 08 / 57P01, Oracle DPI/NJS/ORA network codes.
+    return /PROTOCOL_CONNECTION_LOST|PROTOCOL_ENQUEUE_AFTER_FATAL|ECONNRESET|EPIPE|ETIMEDOUT|57P01|08[0-9A-Z]{3}|connection terminated|DPI-1010|DPI-1080|NJS-50\d|ORA-0311[34]|ORA-03135|ORA-01012/i.test(text)
   }
 
   /** Run fn on the persistent handle of a started connection; one transparent reconnect. */
@@ -548,7 +711,9 @@ class DbCore {
       return await fn(s.handle)
     } catch (error) {
       if (error instanceof DbBrowserError) throw error
-      if (this.isConnectionLoss(error)) {
+      // A stop during the in-flight call removed the session; never resurrect
+      // a pool nobody tracks (it would leak until process exit).
+      if (this.isConnectionLoss(error) && this.sessions.get(c.id) === s) {
         try {
           await s.handle.reopen()
         } catch {
@@ -560,24 +725,46 @@ class DbCore {
     }
   }
 
+  openHandle(c, passwordOverride) {
+    const family = FAMILY[c.type]
+    if (family === 'mysql') return this.openMysqlHandle(c, passwordOverride)
+    if (family === 'postgres') return this.openPostgresHandle(c, passwordOverride)
+    if (family === 'oracle') return this.openOracleHandle(c, passwordOverride)
+    return this.openRedisHandle(c, passwordOverride)
+  }
+
   async startConnection(id) {
     if (this.closed) fail('closed', 'The database browser plugin is unloading')
     const c = this.get(id)
     if (this.sessions.has(id)) return { id, status: 'open' }
-    let handle
-    if (c.type === 'mysql') handle = await this.openMysqlHandle(c)
-    else if (c.type === 'oracle') handle = await this.openOracleHandle(c)
-    else handle = await this.openRedisHandle(c)
-    if (this.closed) {
-      try { await handle.close() } catch { /* unload won the race */ }
-      fail('closed', 'The database browser plugin is unloading')
+    // Concurrent starts (panel click + agent tool) must share one pool build;
+    // two openHandle calls would leak the loser under sessions.set.
+    if (this.starting.has(id)) return this.starting.get(id)
+    const pending = (async () => {
+      const handle = await this.openHandle(c)
+      if (this.closed) {
+        try { await handle.close() } catch { /* unload won the race */ }
+        fail('closed', 'The database browser plugin is unloading')
+      }
+      this.sessions.set(id, { status: 'open', handle, type: c.type })
+      return { id, status: 'open' }
+    })()
+    this.starting.set(id, pending)
+    try {
+      return await pending
+    } finally {
+      this.starting.delete(id)
     }
-    this.sessions.set(id, { status: 'open', handle, type: c.type })
-    return { id, status: 'open' }
   }
 
   async stopConnection(id) {
     this.get(id)
+    // A stop racing an in-flight start waits for the start, then closes what
+    // it built — otherwise the pool would open after the user asked to stop.
+    const pending = this.starting.get(id)
+    if (pending) {
+      try { await pending } catch { /* start failed; nothing to close */ }
+    }
     const s = this.sessions.get(id)
     if (s) {
       this.sessions.delete(id)
@@ -592,10 +779,11 @@ class DbCore {
     assertReadOnlySql(sql, this.allowWrites)
     const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
     const off = Math.max(0, Math.floor(offset) || 0)
-    // Bare SELECT/WITH is wrapped so the server stops at cap+1 rows instead of
-    // streaming an unbounded result into host memory; SHOW/DESC/EXPLAIN are
-    // small catalog reads and get sliced after the fetch.
-    const head = SELECT_HEAD.test(sql)
+    const kind = statementKind(sql)
+    const pageable = kind === 'query'
+    // Bare SELECT/WITH is wrapped so the server stops at cap+1 rows. EXPLAIN,
+    // SHOW and DESC stay intact so their plan or catalog rows are not rewritten.
+    const head = pageable && SELECT_HEAD.test(sql)
     const effective = head ? paginateSelect(sql, 'mysql', off, cap) : sql
     return this.runOn(c, async (h) => {
       const conn = h.client()
@@ -604,13 +792,14 @@ class DbCore {
       const [rows, fields] = await withTimeout(run, this.queryTimeoutMs, () => h.reopen().catch(() => {}))
       const tookMs = Date.now() - started
       const columns = Array.isArray(fields) ? fields.map((f) => f.name ?? String(f)) : []
+      const meta = { tookMs, statementKind: kind, pageable }
       if (Array.isArray(rows)) {
-        const source = head ? rows : rows.slice(off, off + cap + 1)
+        const source = pageable ? (head ? rows : rows.slice(off, off + cap + 1)) : rows.slice(0, cap + 1)
         const truncated = source.length > cap
         const shown = truncated ? source.slice(0, cap) : source
-        return { columns, rows: shown.map(normalizeRow), rowCount: shown.length, truncated, offset: off, tookMs }
+        return { columns, rows: shown.map(normalizeRow), rowCount: shown.length, truncated, offset: pageable ? off : 0, ...meta }
       }
-      return { columns: [], rows: [], affectedRows: rows?.affectedRows ?? 0, truncated: false, offset: off }
+      return { columns: [], rows: [], affectedRows: rows?.affectedRows ?? 0, truncated: false, offset: 0, ...meta, pageable: false, statementKind: kind === 'query' ? 'write' : kind }
     })
   }
 
@@ -671,6 +860,200 @@ class DbCore {
     return this.mysqlQuery(c, `SELECT * FROM \`${backtick(db)}\`.\`${backtick(table)}\` LIMIT ${off}, ${cap + 1}`, cap)
   }
 
+  // ---------- PostgreSQL (covers TDSQL-PG) ----------
+
+  async pgQueryRows(c, text, values) {
+    return this.runOn(c, async (h) => {
+      const run = h.client().query({ text, values, rowMode: 'array' })
+      const r = await withTimeout(run, this.queryTimeoutMs)
+      return { rows: r.rows ?? [], columns: (r.fields ?? []).map((f) => f.name) }
+    })
+  }
+
+  async pgQuery(c, sql, maxRows, offset = 0) {
+    assertReadOnlySql(sql, this.allowWrites)
+    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
+    const off = Math.max(0, Math.floor(offset) || 0)
+    const kind = statementKind(sql)
+    const pageable = kind === 'query'
+    const effective = pageable && SELECT_HEAD.test(sql) ? paginateSelect(sql, 'postgres', off, cap) : sql
+    return this.runOn(c, async (h) => {
+      const started = Date.now()
+      const run = h.client().query({ text: effective, rowMode: 'array' })
+      const r = await withTimeout(run, this.queryTimeoutMs)
+      const tookMs = Date.now() - started
+      const columns = (r.fields ?? []).map((f) => f.name ?? '')
+      const rows = Array.isArray(r.rows) ? r.rows : []
+      const truncated = rows.length > cap
+      return {
+        columns,
+        rows: rows.slice(0, cap).map(normalizeRow),
+        rowCount: Math.min(rows.length, cap),
+        truncated,
+        offset: pageable ? off : 0,
+        tookMs,
+        statementKind: kind,
+        pageable,
+      }
+    })
+  }
+
+  /**
+   * Like Oracle, a PostgreSQL connection opens one database and browses its
+   * schemas; the "databases" list for the tree is the schema list of the
+   * connected database.
+   */
+  async pgSchemas(c) {
+    const r = await this.pgQueryRows(c,
+      `SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY nspname LIMIT 2000`)
+    return r.rows.map((row) => row[0]).filter((name) => typeof name === 'string')
+  }
+
+  async pgTables(c, schema) {
+    if (!schema) fail('bad-request', 'schema is required')
+    const r = await this.pgQueryRows(c,
+      `SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='${quoted(schema)}' ORDER BY table_name LIMIT 5000`)
+    return r.rows.map((row) => ({ name: row[0], kind: row[1] === 'VIEW' ? 'view' : 'table' }))
+  }
+
+  async pgColumns(c, schema, table) {
+    if (!schema || !table) fail('bad-request', 'schema and table are required')
+    const r = await this.pgQueryRows(c,
+      `SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
+              CASE WHEN kcu.column_name IS NULL THEN '' ELSE 'PRI' END
+       FROM information_schema.columns c
+       LEFT JOIN (
+         SELECT kcu2.column_name
+         FROM information_schema.table_constraints tc
+         JOIN information_schema.key_column_usage kcu2
+           ON kcu2.constraint_name = tc.constraint_name AND kcu2.table_schema = tc.table_schema AND kcu2.table_name = tc.table_name
+         WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = '${quoted(schema)}' AND tc.table_name = '${quoted(table)}'
+       ) kcu ON kcu.column_name = c.column_name
+       WHERE c.table_schema = '${quoted(schema)}' AND c.table_name = '${quoted(table)}'
+       ORDER BY c.ordinal_position LIMIT 2000`)
+    return r.rows.map((row) => ({ name: row[0], type: row[1], nullable: row[2] === 'YES', key: row[4] ?? '', default: row[3], extra: '' }))
+  }
+
+  async pgIndexes(c, schema, table) {
+    if (!schema || !table) fail('bad-request', 'schema and table are required')
+    // pg_index.indkey is an int2vector; split its text form so ordinality works on every version.
+    const r = await this.pgQueryRows(c,
+      `SELECT i.relname, ix.indisunique, am.amname, a.attname
+       FROM pg_class t
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       JOIN pg_index ix ON ix.indrelid = t.oid
+       JOIN pg_class i ON i.oid = ix.indexrelid
+       JOIN pg_am am ON am.oid = i.relam
+       CROSS JOIN LATERAL (
+         SELECT s.val::int AS attnum, s.ord
+         FROM regexp_split_to_table(ix.indkey::text, '\\s+') WITH ORDINALITY AS s(val, ord)
+       ) k
+       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+       WHERE n.nspname = '${quoted(schema)}' AND t.relname = '${quoted(table)}'
+       ORDER BY i.relname, k.ord LIMIT 2000`)
+    return groupIndexes(r.rows.map((row) => ({
+      name: row[0], unique: row[1] === true || row[1] === 't', type: row[2],
+      column: row[3], nullable: null, cardinality: null, comment: '',
+    })))
+  }
+
+  pgPreview(c, schema, table, maxRows, offset = 0) {
+    if (!schema || !table) fail('bad-request', 'schema and table are required')
+    const cap = Math.min(Math.max(1, maxRows ?? 100), 1000)
+    return this.pgQuery(c, `SELECT * FROM "${ident(schema)}"."${ident(table)}"`, cap, offset)
+  }
+
+  // ---------- routines (stored procedures / functions) ----------
+
+  /** Gate: the feature matrix decides whether this connection type exposes routines at all. */
+  assertProcedures(c) {
+    if (!this.featuresOf(c).procedures) {
+      fail('unsupported', `Connection type ${c.type} does not support stored procedures; its page hides them. Set features.${c.type}.procedures: true in the plugin config to override.`)
+    }
+  }
+
+  async mysqlRoutines(c, database) {
+    const db = database ?? c.database
+    if (!db) fail('bad-request', 'database is required for a MySQL connection without a default database')
+    const r = await this.mysqlQueryRows(c,
+      `SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='${quoted(db)}' ORDER BY ROUTINE_TYPE, ROUTINE_NAME LIMIT 2000`)
+    return r.rows.map((row) => ({ name: row[0], kind: String(row[1]).toLowerCase(), detail: '' }))
+  }
+
+  async mysqlRoutineSource(c, database, name) {
+    const db = database ?? c.database
+    if (!db || !name) fail('bad-request', 'database and object are required')
+    const r = await this.mysqlQueryRows(c,
+      `SELECT ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='${quoted(db)}' AND ROUTINE_NAME='${quoted(name)}' LIMIT 1`)
+    const kind = r.rows[0]?.[0]
+    if (!kind) fail('not-found', `No routine named ${name} in ${db}`)
+    const ddl = await this.mysqlQueryRows(c, `SHOW CREATE ${kind === 'FUNCTION' ? 'FUNCTION' : 'PROCEDURE'} \`${backtick(db)}\`.\`${backtick(name)}\``)
+    return { ddl: ddl.rows[0]?.[2] ?? '' }
+  }
+
+  async mysqlCallRoutine(c, database, name, args) {
+    const db = database ?? c.database
+    if (!db || !name) fail('bad-request', 'database and object are required')
+    if (!this.allowWrites) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true in the plugin configuration to enable it.')
+    const argv = Array.isArray(args) ? args.map(String) : []
+    if (argv.length > 32) fail('bad-request', 'too many routine arguments')
+    return this.runOn(c, async (h) => {
+      const started = Date.now()
+      const placeholders = argv.map(() => '?').join(', ')
+      const run = h.client().query({ sql: `CALL \`${backtick(db)}\`.\`${backtick(name)}\`(${placeholders})`, values: argv, rowsAsArray: true })
+      const [rows, fields] = await withTimeout(run, this.queryTimeoutMs)
+      const tookMs = Date.now() - started
+      // CALL returns one entry per result set plus an OkPacket; show the first set.
+      const first = Array.isArray(rows?.[0]) && Array.isArray(rows[0][0]) ? rows[0] : rows
+      const firstFields = Array.isArray(fields?.[0]) ? fields[0] : fields
+      const columns = Array.isArray(firstFields) ? firstFields.map((f) => f.name ?? String(f)) : []
+      const list = Array.isArray(first) ? first : []
+      return { columns, rows: list.slice(0, this.maxRows).map(normalizeRow), rowCount: list.length, truncated: list.length > this.maxRows, tookMs, statementKind: 'write', pageable: false }
+    })
+  }
+
+  async pgRoutines(c, schema) {
+    if (!schema) fail('bad-request', 'schema is required')
+    const r = await this.pgQueryRows(c,
+      `SELECT p.proname, CASE WHEN p.prokind = 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END,
+              pg_get_function_identity_arguments(p.oid)
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = '${quoted(schema)}' AND p.prokind IN ('p', 'f')
+       ORDER BY p.proname LIMIT 2000`)
+    return r.rows.map((row) => ({ name: row[0], kind: String(row[1]).toLowerCase(), detail: row[2] ?? '' }))
+  }
+
+  async pgRoutineSource(c, schema, name) {
+    if (!schema || !name) fail('bad-request', 'schema and object are required')
+    // Overloads share a name; return every definition, oldest first.
+    const r = await this.pgQueryRows(c,
+      `SELECT pg_get_functiondef(p.oid)
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = '${quoted(schema)}' AND p.proname = '${quoted(name)}' AND p.prokind IN ('p', 'f')
+       ORDER BY p.oid LIMIT 10`)
+    if (r.rows.length === 0) fail('not-found', `No routine named ${name} in ${schema}`)
+    return { ddl: r.rows.map((row) => row[0]).join('\n\n') }
+  }
+
+  async pgCallRoutine(c, schema, name, args) {
+    if (!schema || !name) fail('bad-request', 'schema and object are required')
+    if (!this.allowWrites) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true in the plugin configuration to enable it.')
+    const kind = await this.pgQueryRows(c,
+      `SELECT p.prokind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = '${quoted(schema)}' AND p.proname = '${quoted(name)}' AND p.prokind IN ('p', 'f') LIMIT 1`)
+    if (kind.rows.length === 0) fail('not-found', `No routine named ${name} in ${schema}`)
+    if (kind.rows[0][0] !== 'p') fail('bad-request', `${name} is a function; only procedures can be executed (use a SELECT in the query pane for functions)`)
+    const argv = Array.isArray(args) ? args.map(String) : []
+    if (argv.length > 32) fail('bad-request', 'too many routine arguments')
+    const placeholders = argv.map((_, i) => `$${i + 1}`).join(', ')
+    return this.runOn(c, async (h) => {
+      const started = Date.now()
+      const run = h.client().query({ text: `CALL "${ident(schema)}"."${ident(name)}"(${placeholders})`, values: argv, rowMode: 'array' })
+      await withTimeout(run, this.queryTimeoutMs)
+      return { columns: [], rows: [], rowCount: 0, truncated: false, tookMs: Date.now() - started, statementKind: 'write', pageable: false }
+    })
+  }
+
   // ---------- Oracle ----------
 
   oracleConnectString(c) {
@@ -684,18 +1067,17 @@ class DbCore {
   }
 
   /** Internal fixed-SQL reads bypass the read-only gate (the SQL is ours). */
-  async oracleExecute(c, sql, maxRows) {
+  async oracleExecute(c, sql, maxRows, binds = []) {
     const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
-    return this.runOn(c, async (h) => {
-      const conn = h.client()
+    return this.runOn(c, (h) => h.run(async (conn) => {
       const oracledb = h.driver
-      const run = conn.execute(sql, [], {
+      const run = conn.execute(sql, binds, {
         outFormat: oracledb.OUT_FORMAT_ARRAY,
         maxRows: cap + 1,
         fetchArraySize: 200,
       })
       const started = Date.now()
-      const r = await withTimeout(run, this.queryTimeoutMs, () => h.reopen().catch(() => {}))
+      const r = await withTimeout(run, this.queryTimeoutMs)
       const tookMs = Date.now() - started
       let columns = (r.metaData ?? []).map((m) => m.name ?? '')
       let rows = Array.isArray(r.rows) ? r.rows : []
@@ -714,16 +1096,18 @@ class DbCore {
         tookMs,
         ...(typeof r.rowsAffected === 'number' ? { affectedRows: r.rowsAffected } : {}),
       }
-    })
+    }))
   }
 
-  oracleQuery(c, sql, maxRows, offset = 0) {
+  async oracleQuery(c, sql, maxRows, offset = 0) {
     assertReadOnlySql(sql, this.allowWrites)
+    const kind = statementKind(sql)
+    const pageable = kind === 'query'
     const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
     const off = Math.max(0, Math.floor(offset) || 0)
-    // Bare SELECT/WITH gets the nested-ROWNUM page; other statement kinds are small catalog reads.
-    const effective = SELECT_HEAD.test(sql) ? paginateSelect(sql, 'oracle', off, cap) : sql
-    return this.oracleExecute(c, effective, cap)
+    const effective = pageable && SELECT_HEAD.test(sql) ? paginateSelect(sql, 'oracle', off, cap) : sql
+    const result = await this.oracleExecute(c, effective, cap)
+    return { ...result, statementKind: kind, pageable }
   }
 
   async oracleSchemas(c) {
@@ -765,6 +1149,44 @@ class DbCore {
     const base = `SELECT * FROM "${ident(schema)}"."${ident(table)}"`
     // ROWNUM works on every Oracle version; FETCH FIRST needs 12c+ (this plugin supports 11g via Thick mode).
     return this.oracleExecute(c, `SELECT * FROM (SELECT dbb_p.*, ROWNUM dbb_prn FROM (${base}) dbb_p WHERE ROWNUM <= ${off + cap + 1}) WHERE dbb_prn > ${off}`, cap)
+  }
+
+  async oracleRoutines(c, schema) {
+    if (!schema) fail('bad-request', 'schema is required')
+    const r = await this.oracleExecute(c,
+      `SELECT OBJECT_NAME, OBJECT_TYPE, STATUS FROM ALL_OBJECTS WHERE OWNER='${quoted(schema)}' AND OBJECT_TYPE IN ('PROCEDURE','FUNCTION','PACKAGE') ORDER BY OBJECT_TYPE, OBJECT_NAME`,
+      2000)
+    return r.rows.map((row) => ({ name: row[0], kind: String(row[1]).toLowerCase(), detail: String(row[2] ?? '').toLowerCase() }))
+  }
+
+  async oracleRoutineSource(c, schema, name, kind) {
+    if (!schema || !name) fail('bad-request', 'schema and object are required')
+    // A package has a spec and a body; TYPE DESC lists PACKAGE BODY after PACKAGE.
+    const types = String(kind ?? '').toLowerCase() === 'package' ? `('PACKAGE','PACKAGE BODY')` : `('${quoted(String(kind ?? 'procedure').toUpperCase())}')`
+    const r = await this.oracleExecute(c,
+      `SELECT TEXT FROM ALL_SOURCE WHERE OWNER='${quoted(schema)}' AND NAME='${quoted(name)}' AND TYPE IN ${types} ORDER BY TYPE DESC, LINE`,
+      10000)
+    if (r.rows.length === 0) fail('not-found', `No source for ${name} in ${schema}`)
+    return { ddl: r.rows.map((row) => row[0]).join('') }
+  }
+
+  async oracleCallRoutine(c, schema, name, args) {
+    if (!schema || !name) fail('bad-request', 'schema and object are required')
+    if (!this.allowWrites) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true in the plugin configuration to enable it.')
+    const type = await this.oracleExecute(c,
+      `SELECT OBJECT_TYPE FROM ALL_OBJECTS WHERE OWNER='${quoted(schema)}' AND OBJECT_NAME='${quoted(name)}' AND OBJECT_TYPE IN ('PROCEDURE','FUNCTION','PACKAGE')`,
+      1)
+    if (type.rows.length === 0) fail('not-found', `No routine named ${name} in ${schema}`)
+    if (type.rows[0][0] !== 'PROCEDURE') fail('bad-request', `${name} is a ${String(type.rows[0][0]).toLowerCase()}; only standalone procedures can be executed here`)
+    const argv = Array.isArray(args) ? args.map(String) : []
+    if (argv.length > 32) fail('bad-request', 'too many routine arguments')
+    const placeholders = argv.map((_, i) => `:${i + 1}`).join(', ')
+    return this.runOn(c, (h) => h.run(async (conn) => {
+      const started = Date.now()
+      const run = conn.execute(`BEGIN "${ident(schema)}"."${ident(name)}"(${placeholders}); END;`, argv)
+      await withTimeout(run, this.queryTimeoutMs)
+      return { columns: [], rows: [], rowCount: 0, truncated: false, tookMs: Date.now() - started, statementKind: 'write', pageable: false }
+    }))
   }
 
   // ---------- Redis ----------
@@ -891,8 +1313,7 @@ class DbCore {
   async test(raw, password) {
     const c = normalizeConnection(raw)
     const override = typeof password === 'string' && password !== '' ? password : undefined
-    const open = c.type === 'mysql' ? this.openMysqlHandle : c.type === 'oracle' ? this.openOracleHandle : this.openRedisHandle
-    const handle = await open.call(this, c, override)
+    const handle = await this.openHandle(c, override)
     await handle.close()
     return { ok: true, type: c.type, ...(c.type === 'redis' ? { mode: c.mode } : {}) }
   }
@@ -900,7 +1321,24 @@ class DbCore {
   async sqlAction(id, action, args = {}) {
     const c = this.get(id)
     if (!SQL_TYPES.has(c.type)) fail('bad-request', `Connection ${id} is ${c.type}, not a SQL database`)
-    if (c.type === 'mysql') {
+    const family = FAMILY[c.type]
+    if (action === 'list_routines' || action === 'show_routine' || action === 'call_routine') {
+      this.assertProcedures(c)
+      if (action === 'list_routines') {
+        if (family === 'mysql') return { database: args.database ?? c.database ?? null, routines: await this.mysqlRoutines(c, args.database) }
+        if (family === 'postgres') return { database: args.database ?? null, routines: await this.pgRoutines(c, args.database) }
+        return { database: args.database ?? null, routines: await this.oracleRoutines(c, args.database) }
+      }
+      if (action === 'show_routine') {
+        if (family === 'mysql') return this.mysqlRoutineSource(c, args.database, args.object)
+        if (family === 'postgres') return this.pgRoutineSource(c, args.database, args.object)
+        return this.oracleRoutineSource(c, args.database, args.object, args.kind)
+      }
+      if (family === 'mysql') return this.mysqlCallRoutine(c, args.database, args.object, args.args)
+      if (family === 'postgres') return this.pgCallRoutine(c, args.database, args.object, args.args)
+      return this.oracleCallRoutine(c, args.database, args.object, args.args)
+    }
+    if (family === 'mysql') {
       if (action === 'list_databases') return { databases: await this.mysqlDatabases(c) }
       if (action === 'list_tables') return { database: args.database ?? c.database ?? null, tables: await this.mysqlTables(c, args.database) }
       if (action === 'describe_table') return { columns: await this.mysqlColumns(c, args.database, args.table) }
@@ -908,12 +1346,20 @@ class DbCore {
       if (action === 'show_create') return this.mysqlShowCreate(c, args.database, args.table)
       if (action === 'list_indexes') return { indexes: await this.mysqlIndexes(c, args.database, args.table) }
       if (action === 'query') return this.mysqlQuery(c, args.sql, args.maxRows, args.offset)
+    } else if (family === 'postgres') {
+      if (action === 'list_databases') return { databases: await this.pgSchemas(c) }
+      if (action === 'list_tables') return { database: args.database ?? null, tables: await this.pgTables(c, args.database) }
+      if (action === 'describe_table') return { columns: await this.pgColumns(c, args.database, args.table) }
+      if (action === 'preview_table') return this.pgPreview(c, args.database, args.table, args.maxRows, args.offset)
+      if (action === 'show_create') fail('bad-request', 'show_create is only available for MySQL-family connections')
+      if (action === 'list_indexes') return { indexes: await this.pgIndexes(c, args.database, args.table) }
+      if (action === 'query') return this.pgQuery(c, args.sql, args.maxRows, args.offset)
     } else {
       if (action === 'list_databases') return { databases: await this.oracleSchemas(c) }
       if (action === 'list_tables') return { database: args.database ?? null, tables: await this.oracleTables(c, args.database) }
       if (action === 'describe_table') return { columns: await this.oracleColumns(c, args.database, args.table) }
       if (action === 'preview_table') return this.oraclePreview(c, args.database, args.table, args.maxRows, args.offset)
-      if (action === 'show_create') fail('bad-request', 'show_create is only available for MySQL connections')
+      if (action === 'show_create') fail('bad-request', 'show_create is only available for MySQL-family connections')
       if (action === 'list_indexes') return { indexes: await this.oracleIndexes(c, args.database, args.table) }
       if (action === 'query') return this.oracleQuery(c, args.sql, args.maxRows, args.offset)
     }
@@ -1074,6 +1520,9 @@ async function dispatchPanelOp(core, op, p) {
     case 'show-create': return core.sqlAction(p.id, 'show_create', p)
     case 'list-indexes': return core.sqlAction(p.id, 'list_indexes', p)
     case 'query': return core.sqlAction(p.id, 'query', p)
+    case 'list-routines': return core.sqlAction(p.id, 'list_routines', p)
+    case 'routine-source': return core.sqlAction(p.id, 'show_routine', p)
+    case 'call-routine': return core.sqlAction(p.id, 'call_routine', p)
     case 'redis-info': return core.redisAction(p.id, 'info')
     case 'redis-keys': return core.redisAction(p.id, 'keys', p)
     case 'redis-get': return core.redisAction(p.id, 'get', p)
@@ -1098,24 +1547,31 @@ function dbToolDefinition(core) {
   return {
     name: 'db_browser',
     description: [
-      'Browse and query configured relational databases (MySQL, TDSQL, GoldenDB, Oracle).',
+      'Browse and query configured relational databases (MySQL, TDSQL-MySQL, GoldenDB, PostgreSQL, TDSQL-PG, Oracle).',
       'A connection must be started before any browsing or query: check status in list_connections',
       '(open = usable, stopped = closed). Use connect/disconnect to control it, or ask the user',
       'to start it in the Database panel. Connections never auto-start and close when DSH exits.',
       'Actions: list_connections (no other params); list_databases (connection);',
       'list_tables (connection, database); describe_table (connection, database, table); list_indexes (connection, database, table);',
-      'preview_table (connection, database, table, optional maxRows <= 1000); show_create (MySQL only, returns DDL);',
-      'query (connection, sql, optional maxRows, optional offset — offset-paginated, truncated=true means more pages).',
+      'preview_table (connection, database, table, optional maxRows <= 1000); show_create (MySQL family only, returns DDL);',
+      'query (connection, sql, optional maxRows, optional offset — offset-paginated, truncated=true means more pages);',
+      'list_routines / show_routine (connection, database, object) — stored procedures and functions, only on connection types',
+      'whose features.procedures is true in list_connections (TDSQL and GoldenDB do not support them);',
+      'call_routine (connection, database, object, optional args — IN arguments as strings) executes a procedure and needs allowWrites.',
+      'The database argument means schema/owner for Oracle and PostgreSQL connections, database name for the MySQL family.',
       'Connections come from the Database browser plugin; ask the user to add one in the sidebar panel when none fit.',
       'Read-only by default: only SELECT/SHOW/DESC/EXPLAIN/WITH, one statement per call.',
     ].join(' '),
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_connections', 'connect', 'disconnect', 'list_databases', 'list_tables', 'describe_table', 'list_indexes', 'preview_table', 'show_create', 'query'], description: 'Operation to run.' },
+        action: { type: 'string', enum: ['list_connections', 'connect', 'disconnect', 'list_databases', 'list_tables', 'describe_table', 'list_indexes', 'preview_table', 'show_create', 'query', 'list_routines', 'show_routine', 'call_routine'], description: 'Operation to run.' },
         connection: { type: 'string', description: 'Connection id from list_connections.' },
-        database: { type: 'string', description: 'Database (MySQL) or schema/owner (Oracle).' },
+        database: { type: 'string', description: 'Database (MySQL family) or schema/owner (Oracle, PostgreSQL).' },
         table: { type: 'string', description: 'Table name.' },
+        object: { type: 'string', description: 'Routine (procedure/function/package) name for show_routine and call_routine.' },
+        kind: { type: 'string', description: 'Routine kind for show_routine on Oracle (procedure/function/package); needed when a package shares its name.' },
+        args: { type: 'array', items: { type: 'string' }, description: 'IN arguments for call_routine, in declaration order, passed as strings.' },
         sql: { type: 'string', description: 'One SQL statement for action=query.' },
         maxRows: { type: 'number', description: 'Row cap per page (default from plugin config, max 10000).' },
         offset: { type: 'number', description: 'Zero-based row offset for pagination; combine with maxRows and the returned truncated flag (true = more rows available).' },
@@ -1220,4 +1676,6 @@ export {
   ident,
   backtick,
   REDIS_READONLY,
+  FAMILY,
+  DEFAULT_FEATURES,
 }

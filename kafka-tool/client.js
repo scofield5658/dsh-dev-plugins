@@ -131,6 +131,8 @@ window.__ModuleLoader__.load({
       'detail.json.invalid': 'Not valid JSON; showing raw text.',
       'detail.null': '(null)',
       'detail.truncated': 'Payload truncated to the first 256 KiB by the server.',
+      'detail.keySize': 'Key size',
+      'detail.valueSize': 'Value size',
       'error.generic': 'Request failed: {message}',
       'common.null': '—',
     }
@@ -225,6 +227,8 @@ window.__ModuleLoader__.load({
       'detail.json.invalid': '不是合法 JSON，显示原始文本。',
       'detail.null': '(null)',
       'detail.truncated': '服务端已将 payload 截断到前 256 KiB。',
+      'detail.keySize': 'Key 大小',
+      'detail.valueSize': 'Value 大小',
       'error.generic': '请求失败：{message}',
       'common.null': '—',
     }
@@ -374,10 +378,11 @@ window.__ModuleLoader__.load({
         ['hex', t('detail.hex')],
       ]
       return h('div', { className: 'kx-payload' },
-        h('div', { className: 'kx-tabs' },
+        h('div', { className: 'kx-tabs', role: 'tablist', 'aria-label': t('detail.value') },
           tabs.map(([id, label]) => h('button', {
-            key: id, type: 'button',
-            className: `kx-tab${tab === id ? ' kx-tab-active' : ''}`,
+            key: id, type: 'button', role: 'tab',
+            'aria-selected': tab === id ? 'true' : 'false',
+            className: 'kx-tab',
             onClick: () => setTab(id),
           }, label))),
         tab === 'json' && pretty === null
@@ -396,11 +401,42 @@ window.__ModuleLoader__.load({
       const { t, base, onClose } = props
       const [full, setFull] = useState(null)
       const [fetchError, setFetchError] = useState(null)
+      const dialogRef = useRef(null)
+      const onCloseRef = useRef(onClose)
+      onCloseRef.current = onClose
+      // Native <dialog>: showModal provides focus containment, Esc dismissal
+      // and top-layer rendering; the close event syncs React state once.
       useEffect(() => {
-        const onKey = event => { if (event.key === 'Escape') onClose() }
-        document.addEventListener('keydown', onKey)
-        return () => document.removeEventListener('keydown', onKey)
-      }, [onClose])
+        const dlg = dialogRef.current
+        if (!dlg) return
+        if (!dlg.open) dlg.showModal()
+        const syncClose = () => onCloseRef.current()
+        dlg.addEventListener('close', syncClose)
+        // closedby="any" fallback: compare pointer coordinates with the rect,
+        // because the dialog is the event target for its own padding.
+        let pressedOutside = false
+        const outside = (e) => {
+          const r = dlg.getBoundingClientRect()
+          return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+        }
+        const onDown = (e) => { pressedOutside = outside(e) }
+        const onUp = (e) => {
+          if ('closedBy' in HTMLDialogElement.prototype) return
+          if (pressedOutside && outside(e)) dlg.close()
+        }
+        dlg.addEventListener('pointerdown', onDown)
+        dlg.addEventListener('pointerup', onUp)
+        return () => {
+          dlg.removeEventListener('close', syncClose)
+          dlg.removeEventListener('pointerdown', onDown)
+          dlg.removeEventListener('pointerup', onUp)
+        }
+      }, [])
+      const closeDialog = () => {
+        const dlg = dialogRef.current
+        if (dlg?.open) dlg.close()
+        else onCloseRef.current()
+      }
       useEffect(() => {
         let cancelled = false
         setFull(null)
@@ -414,25 +450,24 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true }
       }, [props.connId, base.topic, base.partition, base.offset])
       const headers = Object.entries(base.headers ?? {})
-      return h('div', { className: 'kx-modal-mask', onClick: onClose },
-        h('div', {
-          className: 'kx-modal', role: 'dialog', 'aria-modal': 'true',
-          onClick: event => event.stopPropagation(),
+      return h('dialog', {
+          className: 'kx-modal', ref: dialogRef, closedby: 'any',
+          'aria-labelledby': 'kx-detail-title',
         },
           h('div', { className: 'kx-modal-head' },
-            h('span', { className: 'kx-modal-title' }, t('detail.title')),
-            h('button', { type: 'button', className: 'kx-icon-btn', title: t('detail.close'), onClick: onClose }, '✕')),
+            h('span', { className: 'kx-modal-title', id: 'kx-detail-title' }, t('detail.title')),
+            h('button', { type: 'button', className: 'kx-icon-btn', title: t('detail.close'), onClick: closeDialog }, '✕')),
           h('div', { className: 'kx-modal-body' },
             h('div', { className: 'kx-section' },
               h('div', { className: 'kx-section-title' }, t('detail.meta')),
               h('table', { className: 'kx-meta' },
                 h('tbody', null,
-                  [['Topic', base.topic],
+                  [[t('topics.col.name'), base.topic],
                    [t('stream.col.partition'), String(base.partition)],
                    [t('stream.col.offset'), base.offset],
-                   ['Timestamp', `${new Date(Number(base.timestamp)).toLocaleString()} (${base.timestamp})`],
-                   ['Key size', fmtBytes(base.keySize)],
-                   ['Value size', fmtBytes(base.valueSize)],
+                   [t('stream.start.timestamp'), `${new Date(Number(base.timestamp)).toLocaleString()} (${base.timestamp})`],
+                   [t('detail.keySize'), fmtBytes(base.keySize)],
+                   [t('detail.valueSize'), fmtBytes(base.valueSize)],
                   ].map(([k, v]) => h('tr', { key: k }, h('td', { className: 'kx-meta-key' }, k), h('td', null, v))))),
               full?.truncated ? h('div', { className: 'kx-hint' }, t('detail.truncated')) : null),
             base.key !== null
@@ -456,7 +491,7 @@ window.__ModuleLoader__.load({
                       headers.map(([name, b64]) => h('tr', { key: name },
                         h('td', { className: 'kx-meta-key' }, name),
                         h('td', null, bytesPreview(b64ToBytes(b64), 200)))))))
-              : null)))
+              : null))
     }
 
     /**
@@ -486,9 +521,9 @@ window.__ModuleLoader__.load({
 
     /** Windowed div rows (message stream). */
     function VirtualRows(props) {
-      const { rows, renderRow, empty } = props
+      const { rows, renderRow, empty, label } = props
       const win = useVirtualWindow(rows.length)
-      return h('div', { ref: win.ref, className: 'kx-virt', onScroll: win.onScroll },
+      return h('div', { ref: win.ref, className: 'kx-virt', onScroll: win.onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'list' },
         rows.length === 0
           ? h('div', { className: 'kx-empty' }, empty)
           : h('div', { style: { height: rows.length * ROW_H, position: 'relative' } },
@@ -503,11 +538,11 @@ window.__ModuleLoader__.load({
      * variable-height content never disturbs the windowing math.
      */
     function VirtualTable(props) {
-      const { head, rows, renderRow, empty, colSpan, rowH = 28 } = props
+      const { head, rows, renderRow, empty, colSpan, rowH = 28, label } = props
       const win = useVirtualWindow(rows.length, rowH)
       const spacer = height => h('tr', { style: { height }, 'aria-hidden': true },
         h('td', { colSpan, style: { padding: 0, border: 'none' } }))
-      return h('div', { ref: win.ref, className: 'kx-virt', onScroll: win.onScroll },
+      return h('div', { ref: win.ref, className: 'kx-virt', onScroll: win.onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'table' },
         h('table', { className: 'kx-table' },
           h('thead', null, head),
           h('tbody', null,
@@ -530,8 +565,13 @@ window.__ModuleLoader__.load({
         const onDown = event => {
           if (wrapRef.current && !wrapRef.current.contains(event.target)) setOpen(false)
         }
+        const onKey = event => { if (event.key === 'Escape') setOpen(false) }
         document.addEventListener('mousedown', onDown)
-        return () => document.removeEventListener('mousedown', onDown)
+        document.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('mousedown', onDown)
+          document.removeEventListener('keydown', onKey)
+        }
       }, [open])
       const visible = (topics ?? []).filter(one => query === '' || one.toLowerCase().includes(query.toLowerCase()))
       const toggle = name => {
@@ -554,6 +594,7 @@ window.__ModuleLoader__.load({
               : h(VirtualRows, {
                   rows: visible,
                   empty: t('topics.empty'),
+                  label: t('topics.col.name'),
                   renderRow: name => h('label', {
                     key: name, className: 'kx-check-row', style: { height: ROW_H },
                   },
@@ -605,6 +646,8 @@ window.__ModuleLoader__.load({
       const [startOffset, setStartOffset] = useState('')
 
       const [sub, setSub] = useState(null) // {id, epoch, partitions}; restored by the resume effect
+      const [subscribing, setSubscribing] = useState(false)
+      const subscribingRef = useRef(false)
       const [streamError, setStreamError] = useState(null)
       const [olderDone, setOlderDone] = useState(false)
       const [olderLoading, setOlderLoading] = useState(false)
@@ -731,6 +774,9 @@ window.__ModuleLoader__.load({
         inFlightRef.current = true
         try {
           const data = await api(`/subscriptions/${encodeURIComponent(current.id)}/messages?after=${String(lastSeqRef.current)}&limit=${String(POLL_LIMIT)}`)
+          // A stop/disconnect during the request cleared the refs; applying
+          // this late response would resurrect "ghost" messages.
+          if (subRef.current !== current) return
           if (data.epoch !== current.epoch) {
             // Server-side seek we did not initiate; drop local state.
             messagesRef.current = []
@@ -756,6 +802,8 @@ window.__ModuleLoader__.load({
           setLastUpdate(new Date())
           setStreamError(null)
         } catch (err) {
+          // Errors from a subscription the user already left are not errors.
+          if (subRef.current !== current) return
           if (/subscription not found/.test(err.message)) {
             // The host swept the subscription (idle timeout); buffered
             // messages stay readable, but the live tail ends here.
@@ -809,6 +857,10 @@ window.__ModuleLoader__.load({
         setGroups(null)
         setGroupOffsets({})
         setExpandedGroup(null)
+        setTopicOffsets({})
+        setExpandedTopic(null)
+        // A detail dialog over a dead connection can only show stale metadata.
+        setDetail(null)
         setStreamError(null)
         setGapNotice(0)
         setOlderDone(false)
@@ -842,7 +894,9 @@ window.__ModuleLoader__.load({
 
       const subscribe = useCallback(async () => {
         const current = connRef.current
-        if (!current || selectedTopics.length === 0) return
+        if (!current || selectedTopics.length === 0 || subscribingRef.current) return
+        subscribingRef.current = true
+        setSubscribing(true)
         setStreamError(null)
         setGapNotice(0)
         const previous = subRef.current
@@ -860,6 +914,8 @@ window.__ModuleLoader__.load({
           const nextTopics = [...selectedTopics].sort()
           if (previous && previousTopics.length === nextTopics.length && previousTopics.every((one, i) => one === nextTopics[i])) {
             const data = await api(`/subscriptions/${encodeURIComponent(previous.id)}/seek`, { method: 'POST', body: start })
+            // Stopped or resubscribed while the seek was in flight.
+            if (subRef.current !== previous) return
             messagesRef.current = []
             lastSeqRef.current = 0
             cappedRef.current = false
@@ -872,6 +928,14 @@ window.__ModuleLoader__.load({
             method: 'POST',
             body: { c: current.id, topics: selectedTopics, start },
           })
+          if (connRef.current !== current || subRef.current !== previous) {
+            // Stopped/disconnected mid-create: the new server-side consumer
+            // has no owner here; delete it instead of leaking it to the sweep.
+            // (A first subscribe has previous === null, so the connection
+            // identity is what catches a disconnect during creation.)
+            api(`/subscriptions/${encodeURIComponent(data.id)}`, { method: 'DELETE', keepalive: true }).catch(() => {})
+            return
+          }
           if (previous) {
             api(`/subscriptions/${encodeURIComponent(previous.id)}`, { method: 'DELETE', keepalive: true }).catch(() => {})
           }
@@ -882,7 +946,10 @@ window.__ModuleLoader__.load({
           setOlderDone(false)
           setSub({ id: data.id, epoch: data.epoch, partitions: data.partitions })
         } catch (err) {
-          setStreamError(err.message)
+          if (connRef.current === current && subRef.current === previous) setStreamError(err.message)
+        } finally {
+          subscribingRef.current = false
+          setSubscribing(false)
         }
       }, [selectedTopics, startMode, startTimestamp, startOffset, bumpMessages])
 
@@ -923,6 +990,8 @@ window.__ModuleLoader__.load({
               body: { c: currentConn.id, topic: part.topic, partition: part.partition, before, count: BACKFILL_COUNT },
             })
           })
+          // Stop/disconnect during the backfill: do not write into cleared state.
+          if (subRef.current !== current) return
           const known = new Set(messagesRef.current.map(messageKey))
           const added = []
           let allAtBeginning = parts.length > 0
@@ -958,7 +1027,8 @@ window.__ModuleLoader__.load({
           if (allAtBeginning) setOlderDone(true)
           setLastUpdate(new Date())
         } catch (err) {
-          setStreamError(err.message)
+          // Errors from a subscription the user already left are not errors.
+          if (subRef.current === current) setStreamError(err.message)
         } finally {
           setOlderLoading(false)
         }
@@ -1091,8 +1161,8 @@ window.__ModuleLoader__.load({
       }, [messagesVersion, filters])
 
       const renderMessageRow = useCallback(msg => {
-        return h('div', {
-          key: messageKey(msg),
+        return h('button', {
+          key: messageKey(msg), type: 'button',
           className: 'kx-row',
           style: { height: ROW_H },
           onClick: () => setDetail(msg),
@@ -1158,11 +1228,12 @@ window.__ModuleLoader__.load({
           : null,
         connError ? h('span', { className: 'kx-error', title: connError }, connError) : null)
 
-      const viewTabs = h('div', { className: 'kx-viewtabs' },
+      const viewTabs = h('div', { className: 'kx-viewtabs', role: 'tablist', 'aria-label': 'Kafka' },
         [['stream', t('view.stream')], ['topics', t('view.topics')], ['groups', t('view.groups')]].map(([id, label]) =>
           h('button', {
-            key: id, type: 'button',
-            className: `kx-viewtab${view === id ? ' kx-viewtab-active' : ''}`,
+            key: id, type: 'button', role: 'tab',
+            'aria-selected': view === id ? 'true' : 'false',
+            className: 'kx-viewtab',
             onClick: () => setView(id),
           }, label)),
         h('span', { className: 'kx-spacer' }),
@@ -1228,9 +1299,9 @@ window.__ModuleLoader__.load({
               })
             : null,
           sub === null
-            ? h(Btn, { primary: true, disabled: !conn || selectedTopics.length === 0, title: selectedTopics.length === 0 ? t('stream.needTopics') : undefined, onClick: subscribe }, t('stream.subscribe'))
+            ? h(Btn, { primary: true, disabled: !conn || selectedTopics.length === 0 || subscribing, title: selectedTopics.length === 0 ? t('stream.needTopics') : undefined, onClick: subscribe }, subscribing ? h(Spinner) : null, t('stream.subscribe'))
             : h(React.Fragment, null,
-                h(Btn, { onClick: subscribe, title: t('stream.resubscribe') }, t('stream.subscribe')),
+                h(Btn, { disabled: subscribing, onClick: subscribe, title: t('stream.resubscribe') }, subscribing ? h(Spinner) : null, t('stream.subscribe')),
                 h(Btn, { danger: true, onClick: stopSubscription }, t('stream.stop'))),
           h('span', { className: 'kx-spacer' }),
           h(Btn, {
@@ -1276,6 +1347,7 @@ window.__ModuleLoader__.load({
               h(VirtualRows, {
                 rows: filteredMessages,
                 renderRow: renderMessageRow,
+                label: t('stream.col.time'),
                 empty: resuming && sub === null
                   ? t('stream.resuming')
                   : sub
@@ -1297,7 +1369,12 @@ window.__ModuleLoader__.load({
         !conn
           ? h('div', { className: 'kx-empty' }, t('conn.required'))
           : topics === null
-            ? h('div', { className: 'kx-empty' }, h(Spinner), t('common.loading'))
+            // A failed first load must not masquerade as an endless spinner.
+            ? (topicsError
+                ? h('div', { className: 'kx-empty' },
+                    h('div', { className: 'kx-error' }, t('error.generic', { message: topicsError })),
+                    h(Btn, { onClick: loadTopics }, t('topics.reload')))
+                : h('div', { className: 'kx-empty' }, h(Spinner), t('common.loading')))
             : h(React.Fragment, null,
                 h(VirtualTable, {
                   head: h('tr', null,
@@ -1307,10 +1384,19 @@ window.__ModuleLoader__.load({
                   rows: filteredTopics,
                   colSpan: 3,
                   empty: t('topics.empty'),
+                  label: t('topics.col.name'),
                   renderRow: topic => h('tr', {
                     key: topic.name,
                     className: `kx-row-click${expandedTopic === topic.name ? ' kx-row-selected' : ''}`,
+                    tabIndex: 0,
                     onClick: () => {
+                      const next = expandedTopic === topic.name ? null : topic.name
+                      setExpandedTopic(next)
+                      if (next !== null && topicOffsets[next] === undefined) refreshTopicOffsets(next)
+                    },
+                    onKeyDown: (event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
                       const next = expandedTopic === topic.name ? null : topic.name
                       setExpandedTopic(next)
                       if (next !== null && topicOffsets[next] === undefined) refreshTopicOffsets(next)
@@ -1370,7 +1456,11 @@ window.__ModuleLoader__.load({
         !conn
           ? h('div', { className: 'kx-empty' }, t('conn.required'))
           : groups === null
-            ? h('div', { className: 'kx-empty' }, h(Spinner), t('common.loading'))
+            ? (groupsError
+                ? h('div', { className: 'kx-empty' },
+                    h('div', { className: 'kx-error' }, t('error.generic', { message: groupsError })),
+                    h(Btn, { onClick: loadGroups }, t('groups.reload')))
+                : h('div', { className: 'kx-empty' }, h(Spinner), t('common.loading')))
             : h(React.Fragment, null,
                 h(VirtualTable, {
                   head: h('tr', null,
@@ -1381,10 +1471,19 @@ window.__ModuleLoader__.load({
                   rows: filteredGroups,
                   colSpan: 4,
                   empty: t('groups.empty'),
+                  label: t('groups.col.id'),
                   renderRow: group => h('tr', {
                     key: group.groupId,
                     className: `kx-row-click${expandedGroup === group.groupId ? ' kx-row-selected' : ''}`,
+                    tabIndex: 0,
                     onClick: () => {
+                      const next = expandedGroup === group.groupId ? null : group.groupId
+                      setExpandedGroup(next)
+                      if (next !== null && groupOffsets[next] === undefined) refreshGroupOffsets(next)
+                    },
+                    onKeyDown: (event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
                       const next = expandedGroup === group.groupId ? null : group.groupId
                       setExpandedGroup(next)
                       if (next !== null && groupOffsets[next] === undefined) refreshGroupOffsets(next)
@@ -1447,9 +1546,10 @@ window.__ModuleLoader__.load({
 .kx-conn-status { display: inline-flex; align-items: center; gap: 5px; color: var(--dsw-alias-label-secondary); max-width: 220px; }
 .kx-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-state-success-primary, #3ba55d); flex: none; }
 .kx-viewtabs { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3); flex-wrap: wrap; }
-.kx-viewtab { border: none; background: transparent; padding: 4px 10px; border-radius: 6px; cursor: pointer; color: var(--dsw-alias-label-secondary); }
+.kx-viewtab { position: relative; border: none; background: transparent; padding: 4px 10px; border-radius: 6px; cursor: pointer; color: var(--dsw-alias-label-secondary); }
 .kx-viewtab:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.kx-viewtab-active { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); font-weight: 600; }
+.kx-viewtab[aria-selected="true"] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+.kx-viewtab[aria-selected="true"]::after { content: ""; position: absolute; inset: auto 8px 2px; border-bottom: 2px solid var(--dsw-alias-brand-primary); }
 .kx-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .kx-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; flex-wrap: wrap; }
 .kx-toolbar-filters { border-bottom: 1px solid var(--dsw-alias-border-l3); padding-top: 0; }
@@ -1474,6 +1574,7 @@ window.__ModuleLoader__.load({
 .kx-error-bar { padding: 4px 10px; color: var(--dsw-alias-state-error-primary); border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .kx-warn-bar { padding: 4px 10px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-l2); border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .kx-head, .kx-row { display: flex; align-items: center; gap: 0; border-bottom: 1px solid var(--dsw-alias-border-l3); }
+button.kx-row { width: 100%; border-top: none; border-left: none; border-right: none; background: none; color: inherit; font: inherit; text-align: left; padding: 0; }
 .kx-head { color: var(--dsw-alias-label-tertiary); font-weight: 600; background: var(--dsw-alias-bg-base); }
 .kx-row { cursor: pointer; }
 .kx-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
@@ -1496,6 +1597,7 @@ window.__ModuleLoader__.load({
 .kx-table-sub th { position: static; }
 .kx-row-click { cursor: pointer; }
 .kx-row-click:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.kx-row-click:focus-visible, button.kx-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
 .kx-row-selected { background: var(--dsw-alias-interactive-bg-active); }
 .kx-detail { flex: none; max-height: 40%; display: flex; flex-direction: column; border-top: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-l1); }
 .kx-detail-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3); }
@@ -1507,8 +1609,10 @@ window.__ModuleLoader__.load({
 .kx-picker-list { overflow: auto; display: flex; flex-direction: column; }
 .kx-check-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
 .kx-check-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.kx-modal-mask { position: fixed; inset: 0; background: var(--dsw-alias-bg-mask-1); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.kx-modal { width: min(720px, 92vw); max-height: 85vh; display: flex; flex-direction: column; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,0.35); }
+.kx-modal { width: min(720px, 92vw); max-height: 85vh; display: flex; flex-direction: column; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,0.35); padding: 0; }
+.kx-modal:not([open]) { display: none; }
+dialog.kx-modal:modal { overscroll-behavior: contain; }
+.kx-modal::backdrop { background: var(--dsw-alias-bg-mask-1); overflow: hidden; overscroll-behavior: contain; }
 .kx-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .kx-modal-title { font-weight: 600; }
 .kx-modal-body { overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -1517,8 +1621,9 @@ window.__ModuleLoader__.load({
 .kx-meta td { padding: 2px 12px 2px 0; vertical-align: top; }
 .kx-meta-key { color: var(--dsw-alias-label-tertiary); white-space: nowrap; }
 .kx-tabs { display: inline-flex; gap: 2px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 6px; padding: 2px; margin-bottom: 6px; }
-.kx-tab { border: none; background: transparent; padding: 2px 10px; border-radius: 4px; cursor: pointer; color: var(--dsw-alias-label-secondary); }
-.kx-tab-active { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+.kx-tab { position: relative; border: none; background: transparent; padding: 2px 10px; border-radius: 4px; cursor: pointer; color: var(--dsw-alias-label-secondary); }
+.kx-tab[aria-selected="true"] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+.kx-tab[aria-selected="true"]::after { content: ""; position: absolute; inset: auto 6px 1px; border-bottom: 2px solid var(--dsw-alias-brand-primary); }
 .kx-pre { margin: 0; padding: 8px; background: var(--dsw-alias-markdown-code-block); border-radius: 6px; overflow: auto; max-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 .kx-hint { color: var(--dsw-alias-label-tertiary); margin-bottom: 4px; }
 .kx-null { color: var(--dsw-alias-label-dimmed); }
