@@ -10,7 +10,7 @@
 - **特性矩阵**：厂商之间能力不同（典型差异：TDSQL、GoldenDB 不支持存储过程；DDL 查看只有 MySQL 族有）。每种类型有一组默认特性开关（`showCreate` / `explain` / `procedures`），面板和 Agent 工具按它显示或拒绝对应能力；可以在插件配置 `features` 里按类型覆盖。
 - **存储过程**：`procedures: true` 的类型（默认 MySQL、PostgreSQL、Oracle）提供存储过程/函数的列表、定义查看和执行（Oracle 含 PACKAGE 源码查看；执行仅限独立 procedure，且要求 `allowWrites: true`）。
 - **连接池**：每个启动的连接维护一个常驻连接池（mysql2/pg/oracledb 各自的 pool，大小由 `poolMax` 控制，默认 4），界面与 Agent 并发查询共享，避免频繁建连。Redis 单连接天然多路复用，不需要池。
-- **界面**：侧边栏面板列表中的「数据库」入口。左侧连接树（连接 → 库/Schema → 表），右侧 SQL 编辑器与结果网格；支持存储过程的连接有「SQL / 存储过程」子页签；Redis 连接提供键扫描与值查看。
+- **界面**：侧边栏面板列表中的「数据库」入口。左侧连接树（连接 → 库/Schema → 表），右侧 SQL 编辑器与结果网格；支持存储过程的连接有「SQL / 存储过程」子页签；Redis 连接提供键扫描与值查看。连接行上的 ⧉ 按钮可复制连接：带出类型、主机、用户名等可编辑字段，id 与密码留空待填。
 - **Agent 工具**：`db_browser`（连接列表、库表结构、执行 SQL、存储过程 list/show/call）与 `redis_browser`（INFO、扫描键、读值、只读命令）。
 - **安全**：默认只读；在插件配置中设 `allowWrites: true` 才允许写操作与存储过程执行。密码保存在凭据存储，不进入配置文件。
 

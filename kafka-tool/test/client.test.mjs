@@ -69,6 +69,24 @@ test('client module registers the sidebar icon and the main panel', () => {
   assert.equal(dicts.ns, 'kafkaTool')
 })
 
+test('locale files carry the same UI dictionary the panel registers', () => {
+  const { captured, src } = loadClient()
+  const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const { getLocaleDicts, ctx } = fakeCtx()
+  plugin.apply(ctx)
+  const { dicts } = getLocaleDicts()
+  for (const lang of ['zh', 'en']) {
+    const file = JSON.parse(readFileSync(join(here, '..', 'locale', `${lang}.json`), 'utf8'))
+    const registered = Object.fromEntries(Object.entries(dicts[lang]).sort(([a], [b]) => a.localeCompare(b)))
+    const stored = Object.fromEntries(Object.entries(file.ui).sort(([a], [b]) => a.localeCompare(b)))
+    assert.deepEqual(stored, registered, `${lang} locale ui must match the registered dictionary`)
+  }
+  for (const match of src.matchAll(/\bt\('([^']+)'/g)) {
+    assert.ok(match[1] in dicts.zh, `locale key used but missing from zh: ${match[1]}`)
+    assert.ok(match[1] in dicts.en, `locale key used but missing from en: ${match[1]}`)
+  }
+})
+
 test('zh and en locale dictionaries carry the same keys', () => {
   const { captured } = loadClient()
   const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
@@ -111,9 +129,6 @@ test('dictionaries never interpolate unknown parameters', () => {
   }
 })
 
-// ------------------------------------------------------ interaction regression
-
-/** Hooks faithful enough to render the panel once: initializers run, setters are no-ops. */
 function fakeReactRuntime() {
   return {
     createElement: (...args) => ({ __element: args }),

@@ -64,3 +64,22 @@ test('client module registers the sidebar icon and the main panel', () => {
   const iconReg = registrations.find((r) => r.name === 'sidebar.panellist')
   assert.equal(iconReg.label(), 'panel')
 })
+
+test('locale files carry the same UI dictionary the panel registers', () => {
+  const mod = loadClient()
+  const plugin = mod.factory((name) => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const { getLocaleDicts, ctx } = fakeCtx()
+  plugin.apply(ctx)
+  const { dicts } = getLocaleDicts()
+  for (const lang of ['zh', 'en']) {
+    const file = JSON.parse(readFileSync(join(here, '..', 'locale', `${lang}.json`), 'utf8'))
+    const registered = Object.fromEntries(Object.entries(dicts[lang]).sort(([a], [b]) => a.localeCompare(b)))
+    const stored = Object.fromEntries(Object.entries(file.ui).sort(([a], [b]) => a.localeCompare(b)))
+    assert.deepEqual(stored, registered, `${lang} locale ui must match the registered dictionary`)
+  }
+  const src = readFileSync(join(here, '..', 'client.js'), 'utf8')
+  for (const match of src.matchAll(/\bt\('([^']+)'/g)) {
+    assert.ok(match[1] in dicts.zh, `locale key used but missing from zh: ${match[1]}`)
+    assert.ok(match[1] in dicts.en, `locale key used but missing from en: ${match[1]}`)
+  }
+})

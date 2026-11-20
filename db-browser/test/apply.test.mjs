@@ -2,12 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { apply, Config } from '../index.js'
 
-/**
- * Cold-boot regression: apply() must not consume services with a one-shot
- * ctx.get — at boot there is no start-order guarantee, and a silent skip
- * leaves the panel's routes unregistered forever (HTTP 404). Registration
- * must go through ctx.inject so it happens once the services are published.
- */
+// Cold boot: ctx.get can miss services and leave routes unregistered. Use ctx.inject.
 function harness() {
   const services = new Map()
   const injectCalls = []
@@ -81,6 +76,9 @@ test('Config accepts the saved connection shape and rejects a bad limit', () => 
 test('unloading closes sessions inside the plugin and does not throw', async () => {
   const h = harness()
   apply(h.ctx, {})
+  h.services.set('webServer', h.webServer)
+  h.services.set('connection', h.connection)
+  h.services.set('tools', h.tools)
   for (const call of h.injectCalls) call.callback(h.ctx)
   const coreEffect = h.effectDisposers.find((fn) => fn.constructor.name === 'AsyncFunction' || String(fn).includes('core.closed'))
   assert.equal(typeof coreEffect, 'function')

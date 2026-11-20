@@ -1,22 +1,5 @@
 #!/usr/bin/env node
-/**
- * Standalone stdio MCP server exposing the same db_browser / redis_browser
- * tools as the DSH plugin, for MCP-capable agents on other terminals
- * (Claude Code, Cursor, another DSH profile, …).
- *
- * Configuration (no secrets in the file):
- *   DBB_CONNECTIONS_FILE — JSON file shaped like the plugin config:
- *     {
- *       "allowWrites": false,
- *       "connections": [ { "id": "my-mysql", "type": "mysql", ... } ],
- *       "passwords": { "my-mysql": "ENV_VAR_NAME" }        // optional
- *     }
- *   Passwords come from environment variables: the per-connection entry in
- *   "passwords" names the variable; without one, the convention
- *   DBB_PASSWORD_<ID> applies (id uppercased, non [A-Z0-9] → _).
- *
- * Connections start lazily on first use inside this process and close on exit.
- */
+// Passwords come from the environment: passwords[id] names the variable, otherwise DBB_PASSWORD_<ID>.
 import { createInterface } from 'node:readline'
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -40,7 +23,6 @@ function loadConfig() {
 const fileConfig = loadConfig()
 const passwordEnvMap = fileConfig.passwords ?? {}
 
-/** Minimal credential-store facade: passwords resolve from environment variables. */
 const envCredentials = {
   async readRecord(key) {
     const id = String(key).split('/').slice(1).join('/')
@@ -55,8 +37,7 @@ const core = new DbCore(ctx, fileConfig)
 const tools = buildToolDefinitions(core)
 const byName = new Map(tools.map((t) => [t.name, t]))
 
-// In this standalone process connections start on demand; the DSH panel's
-// manual-start rule is a UI concern, not an MCP one.
+// MCP starts a connection on first use. The panel's manual-start rule does not apply here.
 async function ensureStarted(args) {
   const id = args?.connection
   if (typeof id === 'string' && id && !['list_connections', 'connect', 'disconnect'].includes(args?.action)) {

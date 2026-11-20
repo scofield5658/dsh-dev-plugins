@@ -120,8 +120,6 @@ test('sendJson: status, headers, and body', () => {
   assert.deepEqual(JSON.parse(calls.body), { a: 1 })
 })
 
-// ------------------------------------------------------- route-level tests
-
 function mount(config = {}) {
   const listeners = []
   const effects = []

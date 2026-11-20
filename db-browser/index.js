@@ -1,35 +1,10 @@
-/**
- * Host half of the database browser bundle.
- *
- * One core serves two callers (see user-actions practice): the sidebar panel
- * reaches it through the `/db-browser/` HTTP routes, and the agent reaches it
- * through the `db_browser` / `redis_browser` tools. Passwords live in the
- * credential store as `db-browser/c<hex>` grant records. The hex is the
- * connection id: record keys only allow `[a-z0-9-]`, while connection ids
- * also allow `_`, `.`, and capitals. The connection list lives in this
- * row's own config and is edited through the config editor.
- */
-
 const ROUTE_PREFIX = '/db-browser'
 const CREDENTIAL_SCOPE = 'db-browser'
-/** Record-key segment grammar used by dsh-credentials (`^[a-z][a-z0-9-]*$`). */
-const CREDENTIAL_KEY_SEGMENT = /^[a-z][a-z0-9-]*$/
-
-/**
- * Address of one connection's password. `c` plus lowercase hex is injective
- * for every accepted connection id and always a legal credential-key segment.
- */
+// Credential key segments must match `^[a-z][a-z0-9-]*$`. Hex keeps `_`, `.`, and capitals legal.
 function credentialRecordKey(id) {
   const segment = `c${Buffer.from(String(id), 'utf8').toString('hex')}`
-  if (!CREDENTIAL_KEY_SEGMENT.test(segment)) fail('bad-request', 'connection id cannot be stored as a credential key')
   return `${CREDENTIAL_SCOPE}/${segment}`
 }
-/**
- * Connection types are vendor-specific (mysql vs tdsql-mysql vs goldendb …),
- * while drivers and SQL syntax follow the engine family. Features that differ
- * between vendors of one family (stored procedures are the known case: TDSQL
- * and GoldenDB do not support them) are gated by the feature matrix below.
- */
 const FAMILY = {
   mysql: 'mysql',
   'tdsql-mysql': 'mysql',
@@ -43,13 +18,7 @@ const SQL_TYPES = new Set(['mysql', 'tdsql-mysql', 'goldendb', 'postgres', 'tdsq
 const ALL_TYPES = new Set([...SQL_TYPES, 'redis'])
 const DEFAULT_PORT = { mysql: 3306, postgres: 5432, oracle: 1521, redis: 6379, sentinel: 26379 }
 
-/**
- * Per-type capability defaults. Anything the database itself cannot do stays
- * off even when an operator forces it on in `features` (the underlying call
- * will still fail at the server); the flags only control what the panel and
- * the agent tools offer. Operator overrides live in the plugin config:
- *   features: { goldendb: { procedures: true } }
- */
+// These flags only hide panel and tool actions. Turning one on does not make the server support it.
 const DEFAULT_FEATURES = {
   mysql: { showCreate: true, explain: true, procedures: true },
   'tdsql-mysql': { showCreate: true, explain: true, procedures: false },
@@ -59,7 +28,6 @@ const DEFAULT_FEATURES = {
   oracle: { showCreate: false, explain: true, procedures: true },
 }
 
-/** Merge operator overrides over the defaults; unknown keys are ignored. */
 export function resolveFeatures(type, overrides) {
   const base = DEFAULT_FEATURES[type] ?? {}
   const extra = overrides && typeof overrides === 'object' ? overrides[type] : null
@@ -72,19 +40,11 @@ export function resolveFeatures(type, overrides) {
   return out
 }
 
-/** First keyword gate for read-only SQL. */
 const READONLY_HEAD = /^[\s(]*(?:\/\*[\s\S]*?\*\/\s*|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)\s*)*(select|show|desc|describe|explain|with)\b/i
 
-/**
- * Write/lock/file keywords rejected inside any statement while allowWrites is
- * off. Checked against the stripped text (strings, quoted identifiers and
- * comments removed), so `WITH ... DELETE`, `SELECT ... INTO OUTFILE` and
- * `SELECT ... FOR UPDATE` cannot slip through the first-keyword gate, while
- * string literals containing these words stay legal.
- */
+// Checked on stripped SQL, so literals cannot hide writes and WITH/SELECT cannot sneak DELETE, OUTFILE, or FOR UPDATE.
 const WRITE_PATTERN = /\b(?:insert|update|delete|replace|merge|truncate|drop|alter|create|grant|revoke|call|lock|unlock|rename|flush|reset|purge|kill|install|uninstall)\b|\binto\s+(?:out|dump)file\b|\bfor\s+(?:update|share)\b/i
 
-/** Replace string literals, quoted identifiers and comments with spaces. */
 function stripSqlLiterals(sql) {
   let out = ''
   let quote = null
@@ -112,7 +72,6 @@ function stripSqlLiterals(sql) {
   return out
 }
 
-/** Redis commands the agent/UI may run while `allowWrites` is off. */
 const REDIS_READONLY = new Set([
   'GET', 'MGET', 'GETRANGE', 'STRLEN', 'EXISTS', 'TYPE', 'TTL', 'PTTL',
   'HGET', 'HGETALL', 'HKEYS', 'HVALS', 'HLEN', 'HEXISTS', 'HMGET',
@@ -127,7 +86,6 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import Schema from '@deepseek-ai/schemastery'
 
-/** Cordis plugin name. Stable across host reloads. */
 export const name = 'db-browser'
 
 const HostConfig = Schema.object({
@@ -151,17 +109,13 @@ const ConnectionConfig = Schema.object({
   username: Schema.string(),
 })
 
-/** All flags optional: each one falls back to DEFAULT_FEATURES for its type. */
 const FeatureOverride = Schema.object({
   showCreate: Schema.boolean(),
   explain: Schema.boolean(),
   procedures: Schema.boolean(),
 })
 
-/**
- * Validated by Cordis before apply. Defaults match the previous in-code fallbacks,
- * so an existing profile that omits a field keeps the same runtime values.
- */
+// Cordis validates this before apply. Defaults keep an older profile working when a field is omitted.
 export const Config = Schema.object({
   maxRows: Schema.number().min(1).max(10000).default(500),
   queryTimeoutMs: Schema.number().min(1).default(30000),
@@ -190,9 +144,7 @@ const fail = (code, message) => {
   throw new DbBrowserError(code, message)
 }
 
-/** Scan past one semicolon: true when a real statement follows it. */
 function hasMultipleStatements(sql) {
-  // The stripped text keeps semicolons outside strings/comments in place.
   const stripped = stripSqlLiterals(sql)
   const first = stripped.indexOf(';')
   return first !== -1 && stripped.slice(first + 1).trim() !== ''
@@ -254,12 +206,8 @@ function normalizeConnection(raw) {
   if (typeof raw.user !== 'string' || raw.user === '') fail('bad-request', 'connection.user is required')
   out.user = raw.user
   if (family === 'mysql' || family === 'postgres') {
-    // postgres: the database to open (the driver default is "postgres" when omitted).
     if (typeof raw.database === 'string' && raw.database !== '') out.database = raw.database
   } else {
-    // oracle: a full connectString (descriptor with its own ADDRESS_LIST
-    // failover) wins; otherwise serviceName (Easy Connect Plus) or sid
-    // (CONNECT_DATA descriptor) is required.
     if (typeof raw.connectString === 'string' && raw.connectString.trim() !== '') out.connectString = raw.connectString.trim()
     else {
       if (typeof raw.serviceName === 'string' && raw.serviceName.trim() !== '') out.serviceName = raw.serviceName.trim()
@@ -270,7 +218,7 @@ function normalizeConnection(raw) {
   return out
 }
 
-/** Connection shape the panel and tools may see: no secret fields exist here by construction. */
+// No password field: the panel and tools never receive a secret.
 function sanitize(c) {
   const { id, type, label } = c
   const base = { id, type, family: FAMILY[type], label, hosts: c.hosts }
@@ -279,11 +227,11 @@ function sanitize(c) {
   return { ...base, mode: c.mode, db: c.db ?? 0, username: c.username ?? null, masterName: c.masterName ?? null }
 }
 
-/** One-shot Thick-mode initializer: initOracleClient may run once per process. */
+// initOracleClient may run only once per process.
 const oracleThick = { tried: false, error: null }
 
 function ensureOracleThick(oracledb, configuredLib) {
-  if (!oracledb.thin) return // already Thick
+  if (!oracledb.thin) return
   if (oracleThick.tried) {
     if (oracleThick.error) fail('driver-missing', oracleThick.error)
     return
@@ -306,11 +254,6 @@ function ensureOracleThick(oracledb, configuredLib) {
   fail('driver-missing', oracleThick.error)
 }
 
-/**
- * Wrap a bare SELECT/WITH so the server returns at most cap+1 rows starting at
- * offset. MySQL LIMIT works with an offset; Oracle needs the nested-ROWNUM
- * form (compatible with 11g, which this plugin supports via Thick mode).
- */
 function paginateSelect(sql, dialect, offset, cap) {
   const fetchN = cap + 1
   if (dialect === 'mysql') {
@@ -321,13 +264,12 @@ function paginateSelect(sql, dialect, offset, cap) {
   if (dialect === 'postgres') {
     return `SELECT * FROM (${sql}) AS dbb_q LIMIT ${fetchN} OFFSET ${offset}`
   }
-  // Oracle identifiers must start with a letter — no leading underscore.
+  // Oracle identifiers cannot start with `_`.
   return `SELECT * FROM (SELECT dbb_q.*, ROWNUM dbb_rn FROM (${sql}) dbb_q WHERE ROWNUM <= ${offset + fetchN}) WHERE dbb_rn > ${offset}`
 }
 
 const SELECT_HEAD = /^[\s(]*(?:\/\*[\s\S]*?\*\/\s*|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)\s*)*(select|with)\b/i
 
-/** How a user statement should be presented: paged rows, a plan, a catalog, or a write. */
 export function statementKind(sql) {
   const word = String(sql).match(READONLY_HEAD)?.[1]?.toLowerCase()
   if (word === 'explain') return 'plan'
@@ -336,7 +278,6 @@ export function statementKind(sql) {
   return 'write'
 }
 
-/** Fold per-column index rows into one entry per index. */
 function groupIndexes(rows) {
   const byName = new Map()
   for (const row of rows) {
@@ -364,13 +305,8 @@ class DbCore {
     this.sessions = new Map()
     this.starting = new Map()
     for (const raw of Array.isArray(config?.connections) ? config.connections : []) {
-      try {
-        const c = normalizeConnection(raw)
-        this.connections.set(c.id, c)
-      } catch {
-        // Schema rejects this document before apply. Skip here so a direct
-        // DbCore constructed in a test cannot throw out of the constructor.
-      }
+      const c = normalizeConnection(raw)
+      this.connections.set(c.id, c)
     }
   }
 
@@ -415,7 +351,6 @@ class DbCore {
     return (await this.passwordOf(id)) !== undefined
   }
 
-  /** Persist a connection row through the config editor. */
   async saveConnection(raw) {
     const next = normalizeConnection(raw)
     const entry = this.ctx.fiber?.entry
@@ -423,7 +358,6 @@ class DbCore {
     if (!entry || !editor) fail('no-config-editor', 'Configuration cannot be saved in this profile; edit the plugin config in cordis.patch.yml instead')
     const rows = [...this.connections.values()].filter((c) => c.id !== next.id).concat(next)
     await editor.edit(entry, (current) => ({ ...current, connections: rows }))
-    // Editing an ordinary field restarts this plugin; the panel refetches.
     return { saved: next.id }
   }
 
@@ -432,23 +366,15 @@ class DbCore {
     const editor = this.ctx.get('configEditor')
     if (!entry || !editor) fail('no-config-editor', 'Configuration cannot be saved in this profile')
     this.get(id)
-    const rows = this.list().filter((c) => c.id !== id)
+    const rows = [...this.connections.values()].filter((c) => c.id !== id)
     await editor.edit(entry, (current) => ({ ...current, connections: rows }))
     return { deleted: id }
   }
-
-  // ---------- persistent driver handles ----------
 
   statusOf(id) {
     return this.sessions.has(id) ? 'open' : 'stopped'
   }
 
-  /**
-   * Open one persistent MySQL connection pool (multi-host failover when the
-   * pool is (re)created; individual dead connections are re-established by
-   * mysql2 itself). The pool exposes the same query/execute API as a single
-   * connection, so `client()` just returns it.
-   */
   async openMysqlHandle(c, passwordOverride) {
     let mysql
     try {
@@ -477,7 +403,6 @@ class DbCore {
           bigNumberStrings: true, // snowflake IDs exceed 2^53; keep them exact
         })
         try {
-          // Probe once so a bad host/credential fails fast instead of on first use.
           await withTimeout(pool.query('SELECT 1'), 10000, () => pool.end().catch(() => {}))
           return pool
         } catch (error) {
@@ -502,7 +427,6 @@ class DbCore {
     }
   }
 
-  /** Open one persistent PostgreSQL pool (covers TDSQL-PG; multi-host failover on (re)create). */
   async openPostgresHandle(c, passwordOverride) {
     let pg
     try {
@@ -510,9 +434,7 @@ class DbCore {
     } catch {
       fail('driver-missing', 'The pg driver is not installed with the bundle')
     }
-    // BIGINT comes back as a JS number by default and snowflake-style IDs
-    // exceed 2^53; keep int8 exact by reading it as a string. Global to the
-    // pg module, harmless to set on every pool.
+    // pg returns int8 as a JS number; snowflake IDs need the exact string. Parser is process-global.
     pg.types.setTypeParser(20, (value) => value)
     const password = passwordOverride ?? await this.passwordOf(c.id)
     const core = this
@@ -530,7 +452,7 @@ class DbCore {
           idleTimeoutMillis: 60000,
           keepAlive: true,
         })
-        // Idle pooled clients must not tear the panel down when a server drops them.
+        // Idle client errors must not take down the panel.
         pool.on('error', () => {})
         try {
           await withTimeout(pool.query('SELECT 1'), 10000, () => pool.end().catch(() => {}))
@@ -557,11 +479,6 @@ class DbCore {
     }
   }
 
-  /**
-   * Open one persistent Oracle pool (Thin first, Thick fallback for pre-12.1).
-   * Connections are checked out per operation via `run(fn)` and returned to
-   * the pool, so concurrent panel/agent work does not queue behind one socket.
-   */
   async openOracleHandle(c, passwordOverride) {
     let oracledb
     try {
@@ -572,7 +489,7 @@ class DbCore {
     const password = passwordOverride ?? await this.passwordOf(c.id)
     const core = this
     const createPool = async () => {
-      const attempt = oracledb.createPool({
+      const pool = await oracledb.createPool({
         user: c.user,
         password,
         connectString: this.oracleConnectString(c),
@@ -583,9 +500,17 @@ class DbCore {
         connectTimeout: 8,
       })
       try {
-        return await withTimeout(attempt, 10000)
+        // poolMin 0 does not connect. Probe here so NJS-138 still reaches the Thick fallback,
+        // and so a silent listener cannot hang startup past this 10s ceiling.
+        const probe = await withTimeout(
+          pool.getConnection(),
+          10000,
+          () => pool.close(0).catch(() => {}),
+        )
+        await probe.close()
+        return pool
       } catch (error) {
-        attempt.then((orphan) => orphan.close(0).catch(() => {})).catch(() => {})
+        try { await pool.close(0) } catch { /* probe failed */ }
         throw error
       }
     }
@@ -593,8 +518,7 @@ class DbCore {
       try {
         return await createPool()
       } catch (error) {
-        // NJS-138: the server predates Thin mode (pre-12.1) — retry through
-        // the Oracle Instant Client (Thick mode) when one is available.
+        // NJS-138: server is older than 12.1. Retry once through Instant Client.
         if (oracledb.thin && (error?.code === 'NJS-138' || /NJS-138/.test(String(error?.message ?? '')))) {
           ensureOracleThick(oracledb, this.oracleClientLib)
           return createPool()
@@ -625,7 +549,6 @@ class DbCore {
     }
   }
 
-  /** Open one persistent Redis handle (standalone failover / sentinel / cluster). */
   async openRedisHandle(c, passwordOverride) {
     let Redis
     try {
@@ -657,7 +580,6 @@ class DbCore {
           sentinelRetryStrategy: (times) => (times > 5 ? null : Math.min(times * 500, 2000)),
         })
       } else {
-        // Standalone: try each configured host in order (failover).
         let lastError
         for (const host of c.hosts) {
           const candidate = new Redis({ ...common, host: host.host, port: host.port, db: c.db ?? 0, retryStrategy: () => null })
@@ -697,11 +619,9 @@ class DbCore {
 
   isConnectionLoss(error) {
     const text = `${error?.code ?? ''} ${error?.errorNum ?? ''} ${error?.message ?? ''}`
-    // MySQL protocol codes, pg SQLSTATE class 08 / 57P01, Oracle DPI/NJS/ORA network codes.
     return /PROTOCOL_CONNECTION_LOST|PROTOCOL_ENQUEUE_AFTER_FATAL|ECONNRESET|EPIPE|ETIMEDOUT|57P01|08[0-9A-Z]{3}|connection terminated|DPI-1010|DPI-1080|NJS-50\d|ORA-0311[34]|ORA-03135|ORA-01012/i.test(text)
   }
 
-  /** Run fn on the persistent handle of a started connection; one transparent reconnect. */
   async runOn(c, fn) {
     const s = this.sessions.get(c.id)
     if (!s) {
@@ -711,13 +631,12 @@ class DbCore {
       return await fn(s.handle)
     } catch (error) {
       if (error instanceof DbBrowserError) throw error
-      // A stop during the in-flight call removed the session; never resurrect
-      // a pool nobody tracks (it would leak until process exit).
+      // A stop during this call removed the session. Reopening would leak an untracked pool.
       if (this.isConnectionLoss(error) && this.sessions.get(c.id) === s) {
         try {
           await s.handle.reopen()
         } catch {
-          throw error // surface the original failure when reconnect fails
+          throw error
         }
         return await fn(s.handle)
       }
@@ -737,8 +656,7 @@ class DbCore {
     if (this.closed) fail('closed', 'The database browser plugin is unloading')
     const c = this.get(id)
     if (this.sessions.has(id)) return { id, status: 'open' }
-    // Concurrent starts (panel click + agent tool) must share one pool build;
-    // two openHandle calls would leak the loser under sessions.set.
+    // Concurrent starts share one pool build; a second openHandle would leak under sessions.set.
     if (this.starting.has(id)) return this.starting.get(id)
     const pending = (async () => {
       const handle = await this.openHandle(c)
@@ -759,8 +677,7 @@ class DbCore {
 
   async stopConnection(id) {
     this.get(id)
-    // A stop racing an in-flight start waits for the start, then closes what
-    // it built — otherwise the pool would open after the user asked to stop.
+    // Wait out an in-flight start, then close it. Otherwise the pool opens after the user stopped it.
     const pending = this.starting.get(id)
     if (pending) {
       try { await pending } catch { /* start failed; nothing to close */ }
@@ -773,16 +690,13 @@ class DbCore {
     return { id, status: 'stopped' }
   }
 
-  // ---------- MySQL ----------
-
   async mysqlQuery(c, sql, maxRows, offset = 0) {
     assertReadOnlySql(sql, this.allowWrites)
     const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
     const off = Math.max(0, Math.floor(offset) || 0)
     const kind = statementKind(sql)
     const pageable = kind === 'query'
-    // Bare SELECT/WITH is wrapped so the server stops at cap+1 rows. EXPLAIN,
-    // SHOW and DESC stay intact so their plan or catalog rows are not rewritten.
+    // Page SELECT/WITH only. EXPLAIN, SHOW, and DESC must keep their own rows.
     const head = pageable && SELECT_HEAD.test(sql)
     const effective = head ? paginateSelect(sql, 'mysql', off, cap) : sql
     return this.runOn(c, async (h) => {
@@ -803,7 +717,7 @@ class DbCore {
     })
   }
 
-  /** Internal fixed-SQL reads bypass the read-only gate (the SQL is ours). */
+  // Fixed SQL we wrote ourselves; it does not pass the user read-only gate.
   mysqlQueryRows(c, sql) {
     return this.runOn(c, async (h) => {
       const conn = h.client()
@@ -860,8 +774,6 @@ class DbCore {
     return this.mysqlQuery(c, `SELECT * FROM \`${backtick(db)}\`.\`${backtick(table)}\` LIMIT ${off}, ${cap + 1}`, cap)
   }
 
-  // ---------- PostgreSQL (covers TDSQL-PG) ----------
-
   async pgQueryRows(c, text, values) {
     return this.runOn(c, async (h) => {
       const run = h.client().query({ text, values, rowMode: 'array' })
@@ -898,11 +810,7 @@ class DbCore {
     })
   }
 
-  /**
-   * Like Oracle, a PostgreSQL connection opens one database and browses its
-   * schemas; the "databases" list for the tree is the schema list of the
-   * connected database.
-   */
+  // The tree's "databases" for PostgreSQL are schemas of the connected database.
   async pgSchemas(c) {
     const r = await this.pgQueryRows(c,
       `SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY nspname LIMIT 2000`)
@@ -936,7 +844,7 @@ class DbCore {
 
   async pgIndexes(c, schema, table) {
     if (!schema || !table) fail('bad-request', 'schema and table are required')
-    // pg_index.indkey is an int2vector; split its text form so ordinality works on every version.
+    // indkey is an int2vector; split the text so ordinality works on every version.
     const r = await this.pgQueryRows(c,
       `SELECT i.relname, ix.indisunique, am.amname, a.attname
        FROM pg_class t
@@ -963,9 +871,6 @@ class DbCore {
     return this.pgQuery(c, `SELECT * FROM "${ident(schema)}"."${ident(table)}"`, cap, offset)
   }
 
-  // ---------- routines (stored procedures / functions) ----------
-
-  /** Gate: the feature matrix decides whether this connection type exposes routines at all. */
   assertProcedures(c) {
     if (!this.featuresOf(c).procedures) {
       fail('unsupported', `Connection type ${c.type} does not support stored procedures; its page hides them. Set features.${c.type}.procedures: true in the plugin config to override.`)
@@ -1003,7 +908,7 @@ class DbCore {
       const run = h.client().query({ sql: `CALL \`${backtick(db)}\`.\`${backtick(name)}\`(${placeholders})`, values: argv, rowsAsArray: true })
       const [rows, fields] = await withTimeout(run, this.queryTimeoutMs)
       const tookMs = Date.now() - started
-      // CALL returns one entry per result set plus an OkPacket; show the first set.
+      // mysql2 returns one entry per result set, then an OkPacket. Show the first set.
       const first = Array.isArray(rows?.[0]) && Array.isArray(rows[0][0]) ? rows[0] : rows
       const firstFields = Array.isArray(fields?.[0]) ? fields[0] : fields
       const columns = Array.isArray(firstFields) ? firstFields.map((f) => f.name ?? String(f)) : []
@@ -1025,7 +930,7 @@ class DbCore {
 
   async pgRoutineSource(c, schema, name) {
     if (!schema || !name) fail('bad-request', 'schema and object are required')
-    // Overloads share a name; return every definition, oldest first.
+    // Overloads share a name. Return every definition, oldest oid first.
     const r = await this.pgQueryRows(c,
       `SELECT pg_get_functiondef(p.oid)
        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -1054,19 +959,16 @@ class DbCore {
     })
   }
 
-  // ---------- Oracle ----------
-
   oracleConnectString(c) {
     if (c.connectString) return c.connectString
     if (c.sid) {
-      // SID has no Easy Connect form; build a descriptor with ADDRESS_LIST failover.
+      // SID has no Easy Connect form.
       const addresses = c.hosts.map((h) => `(ADDRESS=(PROTOCOL=TCP)(HOST=${h.host})(PORT=${h.port}))`).join('')
       return `(DESCRIPTION=(ADDRESS_LIST=${addresses})(CONNECT_DATA=(SID=${c.sid})))`
     }
     return `${c.hosts.map((h) => `${h.host}:${h.port}`).join(',')}/${c.serviceName}`
   }
 
-  /** Internal fixed-SQL reads bypass the read-only gate (the SQL is ours). */
   async oracleExecute(c, sql, maxRows, binds = []) {
     const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
     return this.runOn(c, (h) => h.run(async (conn) => {
@@ -1081,7 +983,7 @@ class DbCore {
       const tookMs = Date.now() - started
       let columns = (r.metaData ?? []).map((m) => m.name ?? '')
       let rows = Array.isArray(r.rows) ? r.rows : []
-      // Hide our own pagination helper columns (ROWNUM aliases from the wrappers).
+      // Drop the ROWNUM aliases this plugin adds for paging.
       const keep = columns.map((name, i) => (/^DBB_(RN|PRN)$/i.test(name) ? -1 : i)).filter((i) => i >= 0)
       if (keep.length !== columns.length) {
         columns = keep.map((i) => columns[i])
@@ -1147,7 +1049,7 @@ class DbCore {
     const cap = Math.min(Math.max(1, maxRows ?? 100), 1000)
     const off = Math.max(0, Math.floor(offset) || 0)
     const base = `SELECT * FROM "${ident(schema)}"."${ident(table)}"`
-    // ROWNUM works on every Oracle version; FETCH FIRST needs 12c+ (this plugin supports 11g via Thick mode).
+    // FETCH FIRST needs 12c. ROWNUM still works on 11g through Thick mode.
     return this.oracleExecute(c, `SELECT * FROM (SELECT dbb_p.*, ROWNUM dbb_prn FROM (${base}) dbb_p WHERE ROWNUM <= ${off + cap + 1}) WHERE dbb_prn > ${off}`, cap)
   }
 
@@ -1161,7 +1063,7 @@ class DbCore {
 
   async oracleRoutineSource(c, schema, name, kind) {
     if (!schema || !name) fail('bad-request', 'schema and object are required')
-    // A package has a spec and a body; TYPE DESC lists PACKAGE BODY after PACKAGE.
+    // TYPE DESC lists PACKAGE BODY after PACKAGE, so spec and body stay in that order.
     const types = String(kind ?? '').toLowerCase() === 'package' ? `('PACKAGE','PACKAGE BODY')` : `('${quoted(String(kind ?? 'procedure').toUpperCase())}')`
     const r = await this.oracleExecute(c,
       `SELECT TEXT FROM ALL_SOURCE WHERE OWNER='${quoted(schema)}' AND NAME='${quoted(name)}' AND TYPE IN ${types} ORDER BY TYPE DESC, LINE`,
@@ -1188,8 +1090,6 @@ class DbCore {
       return { columns: [], rows: [], rowCount: 0, truncated: false, tookMs: Date.now() - started, statementKind: 'write', pageable: false }
     }))
   }
-
-  // ---------- Redis ----------
 
   redisInfo(c) {
     return this.runOn(c, async (h) => {
@@ -1308,8 +1208,6 @@ class DbCore {
     return this.runOn(c, async (h) => ({ command: cmd, args: argv, result: await h.client().call(cmd, ...argv) }))
   }
 
-  // ---------- shared dispatch ----------
-
   async test(raw, password) {
     const c = normalizeConnection(raw)
     const override = typeof password === 'string' && password !== '' ? password : undefined
@@ -1379,12 +1277,10 @@ class DbCore {
   }
 }
 
-/** Oracle/MySQL identifier quoting helpers. */
 function quoted(value) { return String(value).replace(/'/g, "''") }
 function ident(value) { return String(value).replace(/"/g, '""') }
 function backtick(value) { return String(value).replace(/`/g, '``') }
 
-/** BigInt/Buffer/Date-safe row normalization for JSON transport. */
 function normalizeRow(row) {
   if (!Array.isArray(row)) return row
   return row.map((cell) => {
@@ -1408,8 +1304,6 @@ function withTimeout(promise, ms, onTimeout) {
   })
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
-
-// ---------- HTTP surface ----------
 
 function sendJson(res, status, body) {
   res.statusCode = status
@@ -1435,10 +1329,9 @@ function readBody(req, cap = 1024 * 1024) {
 function registerHttp(ctx, core) {
   const webServer = ctx.get('webServer')
   const connection = ctx.get('connection')
-  if (!webServer) return
   const rejected = (req, res) => {
     if (!connection?.requestRejection) {
-      // Fail closed: without the connection service we cannot authenticate.
+      // No connection service means we cannot authenticate. Fail closed.
       res.statusCode = 403
       res.end()
       return true
@@ -1493,8 +1386,7 @@ function registerHttp(ctx, core) {
 async function dispatchPanelOp(core, op, p) {
   switch (op) {
     case 'save-connection': {
-      // Write the secret first: saving config restarts this plugin, and a
-      // restarted plugin still finds the password under the connection id.
+      // Config save restarts the plugin, so the password must already be stored under the new id.
       if (typeof p.password === 'string' && p.password !== '') {
         const next = normalizeConnection(p.connection)
         await core.savePassword(next.id, p.password)
@@ -1505,8 +1397,6 @@ async function dispatchPanelOp(core, op, p) {
       return core.saveConnection(p.connection)
     }
     case 'delete-connection': {
-      // Password cleanup is best-effort: a missing credential store must not
-      // block removing the config row.
       try { await core.savePassword(p.id, '') } catch { /* credential store unavailable */ }
       return core.deleteConnection(p.id)
     }
@@ -1532,13 +1422,10 @@ async function dispatchPanelOp(core, op, p) {
   }
 }
 
-// ---------- Agent tools ----------
-
 function jsonRender(_args, value) {
   return [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }]
 }
 
-/** The two agent-facing tool definitions; shared by the DSH tool registry and the stdio MCP server. */
 export function buildToolDefinitions(core) {
   return [dbToolDefinition(core), redisToolDefinition(core)]
 }
@@ -1633,25 +1520,17 @@ function redisToolDefinition(core) {
 
 function registerTools(ctx, core) {
   const tools = ctx.get('tools')
-  if (!tools) return
   for (const definition of buildToolDefinitions(core)) {
     ctx.effect(() => tools.register(definition), `db-browser: ${definition.name} tool`)
   }
 }
 
 export function apply(ctx, config) {
-  // Cordis validates Config before calling apply. Running it here too covers
-  // direct callers and turns a bad document into a failed plugin fiber.
   const resolved = Config(config ?? {})
   const core = new DbCore(ctx, resolved)
-  // Cold boot gives no start-order guarantee between this row and the services
-  // it consumes: ctx.get('webServer') can return undefined here, and a silent
-  // skip meant the panel's routes never existed (HTTP 404) until a hot reload.
-  // ctx.inject defers the callback until the services are published and re-runs
-  // it when they reload, disposing our effect registrations in between.
+  // Cold boot has no start order. ctx.get here can miss webServer/tools and leave routes unregistered.
   ctx.inject(['webServer', 'connection'], (injected) => registerHttp(injected, core))
   ctx.inject(['tools'], (injected) => registerTools(injected, core))
-  // DSH exit / plugin reload closes every started connection; nothing auto-restarts.
   ctx.effect(() => async () => {
     core.closed = true
     const sessions = [...core.sessions.values()]
@@ -1662,7 +1541,6 @@ export function apply(ctx, config) {
   }, 'db-browser: close connections')
 }
 
-// Named exports for the unit tests; the runtime only uses `apply`.
 export {
   DbCore,
   paginateSelect,

@@ -1,14 +1,3 @@
-/**
- * Browser half of the Kafka tool bundle.
- *
- * Registers a global panel in the left sidebar's panel list: the launcher icon
- * goes into `sidebar.panellist`, the panel body into the keyed `main` seat —
- * the same surface the DB browser panel uses. The body talks to the Host half
- * over the shared /api bridge; all Kafka client objects live on the Host.
- *
- * List rows carry message metadata only (no value payload); the detail dialog
- * fetches the value of one message on demand through POST /message.
- */
 window.__ModuleLoader__.load({
   id: '@local/kafka-tool',
   factory(require) {
@@ -23,15 +12,9 @@ window.__ModuleLoader__.load({
     const BACKFILL_COUNT = 100
     const BACKFILL_CONCURRENCY = 4
     const ROW_H = 26
-    /** Tail size refilled from the host buffer when the panel remounts. */
     const RESUME_TAIL = 500
 
-    /**
-     * References that survive a panel remount (window or panel switch) — the
-     * connection id, the subscription id, and the user's view selections.
-     * No Kafka data is cached: topics, groups, and messages are always
-     * reloaded from the Host, which holds the source of truth.
-     */
+    // Remount keeps the connection and view choices. Kafka data is always reloaded.
     const panelCache = {
       connInfo: null,
       connForm: null,
@@ -45,7 +28,9 @@ window.__ModuleLoader__.load({
       'conn.brokers': 'Brokers',
       'conn.brokers.placeholder': 'host1:9092, host2:9092',
       'conn.ssl': 'SSL',
+      'conn.ssl.title': 'TLS',
       'conn.sasl': 'SASL',
+      'conn.sasl.title': 'SASL authentication',
       'conn.username': 'Username',
       'conn.password': 'Password',
       'conn.connect': 'Connect',
@@ -83,10 +68,13 @@ window.__ModuleLoader__.load({
       'groups.offsets.col.lag': 'Lag',
       'stream.pickTopics': '{count} topics',
       'stream.pickTopics.none': 'Select topics…',
+      'stream.pick.allFiltered': 'Select all filtered',
+      'stream.pick.clear': 'Clear selection',
       'stream.start.mode': 'Start from',
       'stream.start.latest': 'Latest',
       'stream.start.earliest': 'Earliest',
       'stream.start.timestamp': 'Timestamp',
+      'stream.timestamp.invalid': 'Invalid timestamp',
       'stream.start.offset': 'Offset',
       'stream.subscribe': 'Subscribe',
       'stream.stop': 'Stop',
@@ -141,7 +129,9 @@ window.__ModuleLoader__.load({
       'conn.brokers': 'Broker 地址',
       'conn.brokers.placeholder': 'host1:9092, host2:9092',
       'conn.ssl': 'SSL',
+      'conn.ssl.title': 'TLS',
       'conn.sasl': 'SASL',
+      'conn.sasl.title': 'SASL 认证',
       'conn.username': '用户名',
       'conn.password': '密码',
       'conn.connect': '连接',
@@ -179,10 +169,13 @@ window.__ModuleLoader__.load({
       'groups.offsets.col.lag': '滞后',
       'stream.pickTopics': '{count} 个 topic',
       'stream.pickTopics.none': '选择 topic…',
+      'stream.pick.allFiltered': '全选过滤结果',
+      'stream.pick.clear': '清空选择',
       'stream.start.mode': '起始位置',
       'stream.start.latest': '最新',
       'stream.start.earliest': '最早',
       'stream.start.timestamp': '时间戳',
+      'stream.timestamp.invalid': '时间戳无效',
       'stream.start.offset': 'Offset',
       'stream.subscribe': '订阅',
       'stream.stop': '停止',
@@ -232,8 +225,6 @@ window.__ModuleLoader__.load({
       'error.generic': '请求失败：{message}',
       'common.null': '—',
     }
-
-    // ---------------------------------------------------------------- utils
 
     function b64ToBytes(b64) {
       const bin = atob(b64)
@@ -318,8 +309,6 @@ window.__ModuleLoader__.load({
       return data
     }
 
-    // ------------------------------------------------------------ components
-
     function Btn(props) {
       return h('button', {
         type: 'button',
@@ -340,7 +329,6 @@ window.__ModuleLoader__.load({
         props.children)
     }
 
-    /** Panel launcher icon for `sidebar.panellist`; receives {size, active}. */
     function KafkaIcon(props) {
       const size = props.size ?? 16
       return h('svg', {
@@ -355,7 +343,6 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M9.2 7h5.6M7 9.2v5.6M17 9.2v5.6M9.2 17h5.6' }))
     }
 
-    /** Payload viewer with Hex / Text / JSON tabs; the default follows the content. */
     function PayloadView(props) {
       const { t, base64 } = props
       const bytes = useMemo(() => (base64 === null ? null : b64ToBytes(base64)), [base64])
@@ -393,10 +380,6 @@ window.__ModuleLoader__.load({
               tab === 'hex' ? hexDump(bytes) : tab === 'json' ? pretty : text))
     }
 
-    /**
-     * Detail dialog. The row carries metadata only; the full value payload is
-     * fetched once per message through POST /message when the dialog opens.
-     */
     function MessageDetail(props) {
       const { t, base, onClose } = props
       const [full, setFull] = useState(null)
@@ -404,16 +387,13 @@ window.__ModuleLoader__.load({
       const dialogRef = useRef(null)
       const onCloseRef = useRef(onClose)
       onCloseRef.current = onClose
-      // Native <dialog>: showModal provides focus containment, Esc dismissal
-      // and top-layer rendering; the close event syncs React state once.
       useEffect(() => {
         const dlg = dialogRef.current
         if (!dlg) return
         if (!dlg.open) dlg.showModal()
         const syncClose = () => onCloseRef.current()
         dlg.addEventListener('close', syncClose)
-        // closedby="any" fallback: compare pointer coordinates with the rect,
-        // because the dialog is the event target for its own padding.
+        // The dialog is the target of clicks on its own padding, so hit-test the rect.
         let pressedOutside = false
         const outside = (e) => {
           const r = dlg.getBoundingClientRect()
@@ -494,10 +474,6 @@ window.__ModuleLoader__.load({
               : null))
     }
 
-    /**
-     * Fixed-row-height windowing over a scroll container. Returns the ref to
-     * attach, the scroll handler, and the [start, end) slice to render.
-     */
     function useVirtualWindow(rowCount, rowH = ROW_H) {
       const ref = useRef(null)
       const [box, setBox] = useState({ top: 0, height: 0 })
@@ -519,7 +495,6 @@ window.__ModuleLoader__.load({
       return { ref, onScroll, start, end }
     }
 
-    /** Windowed div rows (message stream). */
     function VirtualRows(props) {
       const { rows, renderRow, empty, label } = props
       const win = useVirtualWindow(rows.length)
@@ -531,12 +506,7 @@ window.__ModuleLoader__.load({
                 rows.slice(win.start, win.end).map(renderRow))))
     }
 
-    /**
-     * Windowed table rows for long metadata lists (topics, consumer groups):
-     * spacer rows keep the scrollbar honest while only the visible slice is
-     * rendered. Detail for the selected row renders outside the table, so
-     * variable-height content never disturbs the windowing math.
-     */
+    // Detail stays outside this table. A variable-height row would break the window math.
     function VirtualTable(props) {
       const { head, rows, renderRow, empty, colSpan, rowH = 28, label } = props
       const win = useVirtualWindow(rows.length, rowH)
@@ -588,6 +558,15 @@ window.__ModuleLoader__.load({
             placeholder: t('topics.search'),
             onChange: event => setQuery(event.target.value),
           }),
+          h('div', { className: 'kx-picker-actions' },
+            h('button', {
+              type: 'button', className: 'kx-link-btn', disabled: visible.length === 0,
+              onClick: () => onChange([...new Set([...selected, ...visible])]),
+            }, t('stream.pick.allFiltered')),
+            h('button', {
+              type: 'button', className: 'kx-link-btn', disabled: selected.length === 0,
+              onClick: () => onChange([]),
+            }, t('stream.pick.clear'))),
           h('div', { className: 'kx-picker-list' },
             topics === null
               ? h('div', { className: 'kx-empty' }, h(Spinner))
@@ -603,8 +582,6 @@ window.__ModuleLoader__.load({
                 })))
           : null)
     }
-
-    // ------------------------------------------------------------- main app
 
     function KafkaExplorerApp(props) {
       const t = props.t
@@ -677,8 +654,6 @@ window.__ModuleLoader__.load({
       useEffect(() => { connRef.current = conn }, [conn])
       useEffect(() => { subRef.current = sub }, [sub])
 
-      // Keep the remount references current; Kafka data itself is never
-      // cached and always comes back from the Host.
       useEffect(() => {
         panelCache.connInfo = conn
         panelCache.connForm = connForm
@@ -688,7 +663,7 @@ window.__ModuleLoader__.load({
       }, [conn, connForm, selectedTopics, view, sub])
 
       useEffect(() => {
-        // Never persist the password; it stays in memory for this mount only.
+        // The password stays in this mount. It is not written to localStorage.
         const { password, ...rest } = connForm
         localStorage.setItem('dsh-kafka-tool:conn', JSON.stringify(rest))
       }, [connForm])
@@ -719,7 +694,6 @@ window.__ModuleLoader__.load({
           const data = await api(`/topics?c=${encodeURIComponent(current.id)}`)
           setTopics(data.topics)
           setLastUpdate(new Date())
-          // Keep the expanded topic's offsets live across reloads.
           if (expandedTopicRef.current !== null) refreshTopicOffsets(expandedTopicRef.current)
         } catch (err) {
           setTopicsError(err.message)
@@ -749,7 +723,6 @@ window.__ModuleLoader__.load({
           const data = await api(`/groups?c=${encodeURIComponent(current.id)}`)
           setGroups(data.groups)
           setLastUpdate(new Date())
-          // Keep expanded detail live across reloads instead of blanking it.
           if (expandedGroupRef.current !== null) refreshGroupOffsets(expandedGroupRef.current)
         } catch (err) {
           setGroupsError(err.message)
@@ -758,7 +731,6 @@ window.__ModuleLoader__.load({
         }
       }, [refreshGroupOffsets])
 
-      /** Decode the key once at receipt so rendering and filtering never re-decode. */
       function decorate(msg) {
         const bytes = msg.key === null ? null : b64ToBytes(msg.key)
         return {
@@ -774,11 +746,10 @@ window.__ModuleLoader__.load({
         inFlightRef.current = true
         try {
           const data = await api(`/subscriptions/${encodeURIComponent(current.id)}/messages?after=${String(lastSeqRef.current)}&limit=${String(POLL_LIMIT)}`)
-          // A stop/disconnect during the request cleared the refs; applying
-          // this late response would resurrect "ghost" messages.
+          // A late response after stop or disconnect must not refill cleared state.
           if (subRef.current !== current) return
           if (data.epoch !== current.epoch) {
-            // Server-side seek we did not initiate; drop local state.
+            // A seek we did not start. Drop the local buffer.
             messagesRef.current = []
             lastSeqRef.current = 0
             cappedRef.current = false
@@ -792,7 +763,7 @@ window.__ModuleLoader__.load({
             const merged = messagesRef.current.concat(data.messages.map(decorate))
             lastSeqRef.current = data.latest
             if (merged.length > MAX_ROWS) {
-              // Tailing keeps the newest; the oldest live messages leave first.
+              // Tail keeps the newest rows.
               merged.splice(0, merged.length - MAX_ROWS)
               cappedRef.current = true
             }
@@ -802,11 +773,9 @@ window.__ModuleLoader__.load({
           setLastUpdate(new Date())
           setStreamError(null)
         } catch (err) {
-          // Errors from a subscription the user already left are not errors.
           if (subRef.current !== current) return
           if (/subscription not found/.test(err.message)) {
-            // The host swept the subscription (idle timeout); buffered
-            // messages stay readable, but the live tail ends here.
+            // Idle sweep ended the tail. Rows already buffered stay readable.
             subRef.current = null
             setSub(null)
             setStreamError(t('stream.expired'))
@@ -819,9 +788,7 @@ window.__ModuleLoader__.load({
       }, [bumpMessages, t])
 
       const connect = useCallback(async (form) => {
-        // Only an object carrying a brokers string is a form — anything else
-        // (for example a click event passed by a bare onClick reference) falls
-        // back to the current form state.
+        // A click event is not a form. Only an object with brokers is.
         const f = form !== null && typeof form === 'object' && typeof form.brokers === 'string' ? form : connForm
         setConnecting(true)
         setConnError(null)
@@ -837,7 +804,6 @@ window.__ModuleLoader__.load({
           setConn(data)
           setTopics(null)
           setGroups(null)
-          // Preload the topic list so the stream view's picker is ready.
           loadTopics()
         } catch (err) {
           setConnError(err.message)
@@ -859,7 +825,6 @@ window.__ModuleLoader__.load({
         setExpandedGroup(null)
         setTopicOffsets({})
         setExpandedTopic(null)
-        // A detail dialog over a dead connection can only show stale metadata.
         setDetail(null)
         setStreamError(null)
         setGapNotice(0)
@@ -904,17 +869,15 @@ window.__ModuleLoader__.load({
           const start = { mode: startMode }
           if (startMode === 'timestamp') {
             const ts = Date.parse(startTimestamp)
-            if (!Number.isFinite(ts)) throw new Error('invalid timestamp')
+            if (!Number.isFinite(ts)) throw new Error(t('stream.timestamp.invalid'))
             start.timestamp = ts
           } else if (startMode === 'offset') {
             start.offset = startOffset
           }
-          // Same topic set: reposition the live consumer instead of recreating it.
           const previousTopics = previous === null ? [] : [...new Set(previous.partitions.map(one => one.topic))].sort()
           const nextTopics = [...selectedTopics].sort()
           if (previous && previousTopics.length === nextTopics.length && previousTopics.every((one, i) => one === nextTopics[i])) {
             const data = await api(`/subscriptions/${encodeURIComponent(previous.id)}/seek`, { method: 'POST', body: start })
-            // Stopped or resubscribed while the seek was in flight.
             if (subRef.current !== previous) return
             messagesRef.current = []
             lastSeqRef.current = 0
@@ -929,10 +892,7 @@ window.__ModuleLoader__.load({
             body: { c: current.id, topics: selectedTopics, start },
           })
           if (connRef.current !== current || subRef.current !== previous) {
-            // Stopped/disconnected mid-create: the new server-side consumer
-            // has no owner here; delete it instead of leaking it to the sweep.
-            // (A first subscribe has previous === null, so the connection
-            // identity is what catches a disconnect during creation.)
+            // Disconnect during create leaves this consumer unowned. Delete it.
             api(`/subscriptions/${encodeURIComponent(data.id)}`, { method: 'DELETE', keepalive: true }).catch(() => {})
             return
           }
@@ -951,9 +911,8 @@ window.__ModuleLoader__.load({
           subscribingRef.current = false
           setSubscribing(false)
         }
-      }, [selectedTopics, startMode, startTimestamp, startOffset, bumpMessages])
+      }, [selectedTopics, startMode, startTimestamp, startOffset, bumpMessages, t])
 
-      /** Run promise factories with bounded concurrency, preserving order. */
       async function pool(items, size, fn) {
         const results = new Array(items.length)
         let cursor = 0
@@ -978,8 +937,7 @@ window.__ModuleLoader__.load({
             const existing = minByPart.get(key)
             if (existing === undefined || BigInt(msg.offset) < BigInt(existing)) minByPart.set(key, msg.offset)
           }
-          // Backfill always covers every subscribed partition; display filters
-          // must not shrink the history window.
+          // Display filters must not shrink this window.
           const parts = current.partitions
           const results = await pool(parts, BACKFILL_CONCURRENCY, async part => {
             const key = `${part.topic}:${String(part.partition)}`
@@ -990,7 +948,6 @@ window.__ModuleLoader__.load({
               body: { c: currentConn.id, topic: part.topic, partition: part.partition, before, count: BACKFILL_COUNT },
             })
           })
-          // Stop/disconnect during the backfill: do not write into cleared state.
           if (subRef.current !== current) return
           const known = new Set(messagesRef.current.map(messageKey))
           const added = []
@@ -1016,8 +973,7 @@ window.__ModuleLoader__.load({
               return BigInt(a.offset) < BigInt(b.offset) ? -1 : 1
             })
             if (merged.length > MAX_ROWS) {
-              // History paging keeps the oldest; drop the newest end instead —
-              // dropping the front here would discard the history just fetched.
+              // History keeps the oldest rows. Drop the newest end.
               merged.splice(MAX_ROWS)
               cappedRef.current = true
             }
@@ -1027,14 +983,12 @@ window.__ModuleLoader__.load({
           if (allAtBeginning) setOlderDone(true)
           setLastUpdate(new Date())
         } catch (err) {
-          // Errors from a subscription the user already left are not errors.
           if (subRef.current === current) setStreamError(err.message)
         } finally {
           setOlderLoading(false)
         }
       }, [olderLoading, bumpMessages])
 
-      // Auto refresh: poll the stream, or reload the visible metadata view.
       useEffect(() => {
         if (!auto.enabled) return undefined
         const sec = Math.min(Math.max(Number(auto.intervalSec) || 5, 1), 3600)
@@ -1050,25 +1004,18 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer)
       }, [auto.enabled, auto.intervalSec, view, poll, loadTopics, loadGroups])
 
-      // Load metadata when a view becomes visible.
       useEffect(() => {
         if (!conn) return
         if (view === 'topics' && topics === null && !loadingTopics) loadTopics()
         if (view === 'groups' && groups === null && !loadingGroups) loadGroups()
       }, [view, conn, topics, groups, loadingTopics, loadingGroups, loadTopics, loadGroups])
 
-      // Panel switches may unmount this view. Opening a connection is always
-      // the user's explicit action — a remount only resumes a connection the
-      // Host still holds and never opens a new one. When DSH exits, plugin
-      // unload drops every connection automatically.
       const autoTriedRef = useRef(false)
       useEffect(() => {
         if (autoTriedRef.current) return
         autoTriedRef.current = true
         const cached = panelCache.connInfo
         if (cached !== null) {
-          // Validate the remembered connection, then reload everything fresh:
-          // topics, and the stream's tail from the host-side buffer.
           api(`/connections/${encodeURIComponent(cached.id)}`)
             .then(async info => {
               connRef.current = info
@@ -1087,7 +1034,6 @@ window.__ModuleLoader__.load({
                   setSub(subInfo)
                   setStreamError(null)
                 } catch {
-                  // The subscription is gone; the connection is fine.
                   panelCache.subId = null
                   subRef.current = null
                   setSub(null)
@@ -1096,7 +1042,7 @@ window.__ModuleLoader__.load({
               }
             })
             .catch(() => {
-              // Swept on the host (idle timeout or DSH restart): manual control.
+              // Host idle sweep or restart. Do not open a new connection.
               panelCache.connInfo = null
               panelCache.subId = null
               setConn(null)
@@ -1105,7 +1051,6 @@ window.__ModuleLoader__.load({
           return
         }
         setResuming(false)
-        // Fresh panel: prefill the form from plugin defaults, stay disconnected.
         if (localStorage.getItem('dsh-kafka-tool:conn') === null) {
           api('/defaults')
             .then(d => {
@@ -1175,8 +1120,6 @@ window.__ModuleLoader__.load({
           h('span', { className: 'kx-cell kx-col-size' }, fmtBytes(msg.valueSize)))
       }, [])
 
-      // ----------------------------------------------------------- renders
-
       const connBar = h('div', { className: 'kx-conn' },
         h('input', {
           className: 'kx-input kx-conn-brokers',
@@ -1186,13 +1129,13 @@ window.__ModuleLoader__.load({
           title: t('conn.brokers'),
           onChange: event => setConnForm({ ...connForm, brokers: event.target.value }),
         }),
-        h('label', { className: 'kx-check-inline', title: 'TLS' },
+        h('label', { className: 'kx-check-inline', title: t('conn.ssl.title') },
           h('input', {
             type: 'checkbox', checked: connForm.ssl, disabled: conn !== null,
             onChange: event => setConnForm({ ...connForm, ssl: event.target.checked }),
           }),
           t('conn.ssl')),
-        h('label', { className: 'kx-check-inline', title: 'SASL authentication' },
+        h('label', { className: 'kx-check-inline', title: t('conn.sasl.title') },
           h('input', {
             type: 'checkbox', checked: connForm.sasl, disabled: conn !== null,
             onChange: event => setConnForm({ ...connForm, sasl: event.target.checked }),
@@ -1228,7 +1171,7 @@ window.__ModuleLoader__.load({
           : null,
         connError ? h('span', { className: 'kx-error', title: connError }, connError) : null)
 
-      const viewTabs = h('div', { className: 'kx-viewtabs', role: 'tablist', 'aria-label': 'Kafka' },
+      const viewTabs = h('div', { className: 'kx-viewtabs', role: 'tablist', 'aria-label': t('panel') },
         [['stream', t('view.stream')], ['topics', t('view.topics')], ['groups', t('view.groups')]].map(([id, label]) =>
           h('button', {
             key: id, type: 'button', role: 'tab',
@@ -1369,7 +1312,6 @@ window.__ModuleLoader__.load({
         !conn
           ? h('div', { className: 'kx-empty' }, t('conn.required'))
           : topics === null
-            // A failed first load must not masquerade as an endless spinner.
             ? (topicsError
                 ? h('div', { className: 'kx-empty' },
                     h('div', { className: 'kx-error' }, t('error.generic', { message: topicsError })),
@@ -1606,6 +1548,10 @@ button.kx-row { width: 100%; border-top: none; border-left: none; border-right: 
 .kx-picker { position: relative; }
 .kx-picker-btn { min-width: 130px; justify-content: space-between; }
 .kx-picker-pop { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; width: 260px; max-height: 300px; display: flex; flex-direction: column; gap: 4px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
+.kx-picker-actions { display: flex; justify-content: space-between; gap: 8px; padding: 0 2px; }
+.kx-link-btn { border: none; background: none; padding: 2px; cursor: pointer; font-size: 12px; color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary)); }
+.kx-link-btn:hover:not(:disabled) { text-decoration: underline; }
+.kx-link-btn:disabled { opacity: 0.5; cursor: default; }
 .kx-picker-list { overflow: auto; display: flex; flex-direction: column; }
 .kx-check-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
 .kx-check-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
@@ -1631,8 +1577,6 @@ dialog.kx-modal:modal { overscroll-behavior: contain; }
 @keyframes kx-spin { to { transform: rotate(360deg); } }
 `)
     }
-
-    // --------------------------------------------------------- registration
 
     return {
       name: 'kafka-tool',

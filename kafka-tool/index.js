@@ -1,25 +1,10 @@
-/**
- * Host half of the Kafka explorer bundle.
- *
- * Serves the panel's JSON API under /api/kafka-tool/* on the shared,
- * already-authenticated /api bridge (see the client-connection
- * `connection/request` waterfall), and owns every Kafka client object the
- * panel asks for: one admin-backed connection per broker set, plus one
- * consumer per message subscription. Everything is stopped when the plugin
- * unloads, and idle objects are swept periodically.
- */
 import { randomUUID } from 'node:crypto'
 import { Kafka, logLevel } from 'kafkajs'
 import Schema from '@deepseek-ai/schemastery'
 
-/** Cordis plugin name. Stable across host reloads. */
 export const name = 'kafka-tool'
 
-/**
- * Validated by Cordis before apply. Password is intentionally absent: a secret
- * in this document would be stored in the profile patch. Runtime still drops
- * a password key if one is present, so it never reaches the panel defaults.
- */
+// Password is absent on purpose: a secret here would be written into the profile patch.
 export const Config = Schema.object({
   brokers: Schema.array(Schema.string()).default([]),
   ssl: Schema.boolean().default(false),
@@ -29,7 +14,7 @@ export const Config = Schema.object({
   }),
 })
 
-/** Empty or partial SASL from schema defaults is "not configured", not PLAIN with a blank user. */
+// A blank SASL object from schema defaults means "not configured", not PLAIN with an empty user.
 export function configuredSasl(value) {
   if (!value || typeof value !== 'object') return null
   const mechanism = value.mechanism
@@ -131,11 +116,6 @@ export function encodeHeaders(message) {
   return headers
 }
 
-/**
- * Serialize one message for the wire. List rows carry no value payload
- * (`withValue: false`); the detail dialog fetches the value on demand
- * through POST /message, so buffering thousands of rows stays cheap.
- */
 export function encodeMessage(seq, topic, partition, message, { withValue = false } = {}) {
   const key = message.key ?? null
   const value = message.value ?? null
@@ -159,7 +139,6 @@ export function encodeMessage(seq, topic, partition, message, { withValue = fals
   }
 }
 
-/** Run fn over items with bounded concurrency, preserving order. */
 export async function mapPool(items, size, fn) {
   const results = new Array(items.length)
   let cursor = 0
@@ -275,7 +254,6 @@ export function apply(ctx, config = {}) {
   }
 
   async function planSeeks(admin, sub, spec) {
-    // Compute the desired start offset per assigned partition.
     const byTopic = new Map()
     for (const part of sub.partitions) {
       if (!byTopic.has(part.topic)) byTopic.set(part.topic, [])
@@ -290,7 +268,7 @@ export function apply(ctx, config = {}) {
         for (const row of rows) {
           const part = byTopic.get(topic).find(one => one.partition === row.partition)
           if (part === undefined) continue
-          // -1: no message at or after the timestamp; start at the end.
+          // -1 means nothing at or after the timestamp; start at the end.
           const target = BigInt(row.offset) < 0n ? BigInt(part.high) : clampOffset(row.offset, BigInt(part.low), BigInt(part.high))
           plan.set(`${topic}:${row.partition}`, target.toString())
         }
@@ -329,7 +307,7 @@ export function apply(ctx, config = {}) {
       ssl: body.ssl === true || (body.ssl && typeof body.ssl === 'object') ? (body.ssl === true ? true : body.ssl) : false,
       sasl: asSasl(body.sasl),
     }
-    // Panel remounts reconnect with the same form; reuse the live connection.
+    // Same form on remount reuses the live connection.
     const key = JSON.stringify(params)
     for (const conn of connections.values()) {
       if (JSON.stringify(conn.params) === key) {
@@ -376,12 +354,7 @@ export function apply(ctx, config = {}) {
     return conn.info
   }
 
-  /**
-   * Topic list from metadata only: one broker round trip even on clusters
-   * with thousands of topics. Offsets load lazily per topic through
-   * GET /topic-offsets, because fetchTopicOffsets throws on partitions
-   * whose leaders are offline — a common sight on big shared clusters.
-   */
+  // Metadata only. fetchTopicOffsets throws when a partition leader is offline, so offsets load per topic.
   async function listTopics(conn) {
     const admin = await ensureAdmin(conn)
     const meta = await admin.fetchTopicMetadata()
@@ -397,7 +370,6 @@ export function apply(ctx, config = {}) {
     return { topics }
   }
 
-  /** Begin/end offsets of one topic, tolerant of partially offline topics. */
   async function topicOffsets(conn, topic) {
     if (typeof topic !== 'string' || topic === '') throw new HttpError(400, 'topic is required')
     const admin = await ensureAdmin(conn)
@@ -442,8 +414,7 @@ export function apply(ctx, config = {}) {
   async function groupOffsets(conn, groupId) {
     const admin = await ensureAdmin(conn)
     const rows = await admin.fetchOffsets({ groupId })
-    // Topics whose leaders are (partially) offline make fetchTopicOffsets
-    // throw; keep their lag unknown instead of failing the whole group.
+    // An offline leader makes fetchTopicOffsets throw. Unknown lag is better than failing the group.
     const endsByTopic = await mapPool(rows, 10, row =>
       admin.fetchTopicOffsets(row.topic).catch(() => null))
     const topics = rows.map((row, index) => {
@@ -506,8 +477,7 @@ export function apply(ctx, config = {}) {
           }
         }
       })
-      // fromBeginning only matters while the plan has no entry for a partition;
-      // keep it aligned with the requested mode for safety.
+      // fromBeginning only applies to partitions the seek plan does not cover.
       await consumer.subscribe({ topics, fromBeginning: start.mode === 'earliest' })
       await consumer.run({
         autoCommit: false,
@@ -517,7 +487,7 @@ export function apply(ctx, config = {}) {
         },
       })
     } catch (err) {
-      // Never leak a half-started consumer out of a failed subscription.
+      // A failed subscribe must not leave a connected consumer for the idle sweep.
       try { await consumer.stop() } catch { /* not running */ }
       try { await consumer.disconnect() } catch { /* not connected */ }
       throw err
@@ -600,7 +570,6 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  /** Fetch one full message (value included) by exact offset for the detail dialog. */
   async function fetchOneMessage(conn, body) {
     const offset = BigInt(String(body.offset ?? ''))
     const result = await backfill(conn, {
@@ -629,7 +598,6 @@ export function apply(ctx, config = {}) {
       return sendJson(res, 200, await createConnection(await readBody(req)))
     }
     if (head === 'connections' && segments.length === 2 && req.method === 'GET') {
-      // Liveness probe for panel remounts; never creates anything.
       const conn = connections.get(segments[1])
       if (conn === undefined) throw new HttpError(404, 'connection not found or expired')
       touchConn(conn)
@@ -661,16 +629,13 @@ export function apply(ctx, config = {}) {
       const sub = getSub(segments[1])
       const tail = url.searchParams.get('tail')
       if (tail !== null) {
-        // Remount resume: refill from the host ring buffer's tail. The client
-        // continues polling from `latest` afterwards.
         const n = Math.min(Math.max(Number(tail) || POLL_LIMIT_CAP, 1), POLL_LIMIT_CAP)
         return sendJson(res, 200, { messages: sub.buffer.slice(-n), latest: sub.seq, epoch: sub.epoch, dropped: 0 })
       }
       const after = Number(url.searchParams.get('after') ?? '0')
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '200') || 200, 1), POLL_LIMIT_CAP)
       const messages = sub.buffer.filter(one => one.seq > after).slice(0, limit)
-      // Messages with seq in (after, firstAvailable) left the ring buffer
-      // between polls; tell the client exactly how many it can never see.
+      // seq values between `after` and the buffer head were evicted. `dropped` is how many the client missed.
       let dropped = 0
       if (after > 0 && sub.buffer.length > 0 && sub.buffer[0].seq > after + 1) {
         dropped = sub.buffer[0].seq - after - 1
@@ -678,7 +643,6 @@ export function apply(ctx, config = {}) {
       return sendJson(res, 200, { messages, latest: sub.seq, epoch: sub.epoch, dropped })
     }
     if (head === 'subscriptions' && segments.length === 2 && req.method === 'GET') {
-      // Liveness + info probe for panel remounts; never creates anything.
       const sub = getSub(segments[1])
       return sendJson(res, 200, { id: sub.id, epoch: sub.epoch, partitions: sub.partitions })
     }
@@ -707,9 +671,6 @@ export function apply(ctx, config = {}) {
     throw new HttpError(404, `unknown kafka-tool route: ${req.method} ${url.pathname}`)
   }
 
-  // ---------- Agent tool ----------
-
-  /** Decode bytes for an agent: printable UTF-8 as text, otherwise base64. */
   function agentBytes(b64) {
     if (b64 === null || b64 === undefined) return null
     const bytes = Buffer.from(b64, 'base64')
@@ -738,7 +699,6 @@ export function apply(ctx, config = {}) {
 
   function registerTools() {
     const tools = ctx.get('tools')
-    if (!tools) return
     ctx.effect(() => tools.register({
       name: 'kafka_query',
       description: [
@@ -819,9 +779,7 @@ export function apply(ctx, config = {}) {
     }), 'kafka-tool: kafka_query tool')
   }
 
-  // The tools service has no start-order guarantee against this row at cold
-  // boot; ctx.inject defers registration until it is published and re-runs on
-  // its reload, instead of a one-shot ctx.get that could silently skip us.
+  // Cold boot has no start order. ctx.get('tools') here can skip registration until a hot reload.
   ctx.inject(['tools'], () => registerTools())
 
   ctx.on('connection/request', async (req, res, next) => {

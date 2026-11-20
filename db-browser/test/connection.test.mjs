@@ -97,7 +97,6 @@ test('DbCore: config parsing, sanitize leaks nothing, defaults', () => {
   const core = new DbCore(stubCtx(), {
     connections: [
       { id: 'm', type: 'mysql', user: 'u', password: 'SHOULD-NOT-ROUNDTRIP', hosts: [{ host: 'h' }] },
-      { id: 'bad', type: 'nope' }, // silently skipped
     ],
   })
   assert.equal(core.allowWrites, false)
@@ -108,6 +107,13 @@ test('DbCore: config parsing, sanitize leaks nothing, defaults', () => {
   assert.equal(list[0].id, 'm')
   assert.ok(!('password' in list[0]), 'sanitized connection must not carry password')
   assert.throws(() => core.get('nope'), (e) => e.code === 'unknown-connection' && /m/.test(e.message))
+})
+
+test('DbCore: an invalid connection fails construction', () => {
+  assert.throws(
+    () => new DbCore(stubCtx(), { connections: [{ id: 'bad', type: 'nope' }] }),
+    (e) => e.code === 'bad-request',
+  )
 })
 
 test('DbCore: caps are clamped', () => {

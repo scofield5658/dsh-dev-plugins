@@ -1,9 +1,5 @@
-/**
- * Integration tests against a real Kafka broker. They are skipped when no
- * broker is reachable; point KAFKA_TOOL_TEST_BROKERS at another cluster to
- * run them elsewhere. The suite creates and deletes its own topic and
- * consumer group, so it is safe to run repeatedly.
- */
+// Skipped unless a broker answers. KAFKA_TOOL_TEST_BROKERS overrides localhost:9092.
+// The suite creates and deletes its own topic and group.
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { Kafka, logLevel } from 'kafkajs'

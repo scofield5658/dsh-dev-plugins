@@ -1,9 +1,3 @@
-/**
- * Browser half of the database browser bundle: a sidebar panel-list icon and
- * the `database` main panel (connection tree, SQL editor with result grid,
- * Redis key browser). All data flows through the Host half's /db-browser/
- * routes; this module holds no secrets and no business logic beyond view state.
- */
 window.__ModuleLoader__.load({
   id: '@local/db-browser',
   factory(require) {
@@ -21,6 +15,8 @@ window.__ModuleLoader__.load({
       'newConnection': '新建连接',
       'refresh': '刷新',
       'edit': '编辑',
+      'copy': '复制连接',
+      'copy.suffix': '副本',
       'conn.start': '启动',
       'conn.stop': '停止',
       'conn.starting': '连接中…',
@@ -34,6 +30,7 @@ window.__ModuleLoader__.load({
       'confirmDelete': '确定删除连接「{label}」吗？其密码会一并移除。',
       'form.titleNew': '新建连接',
       'form.titleEdit': '编辑连接',
+      'form.titleDuplicate': '复制连接',
       'form.id': '标识 (id)',
       'form.idHint': '字母、数字、_ . -，保存后不可改；Agent 用它指定连接',
       'form.label': '名称',
@@ -121,6 +118,8 @@ window.__ModuleLoader__.load({
       'cols.name': '列名',
       'cols.type': '类型',
       'cols.null': '可空',
+      'cols.yes': '是',
+      'cols.no': '否',
       'cols.key': '键',
       'cols.default': '默认值',
       'cols.extra': '额外信息',
@@ -141,6 +140,8 @@ window.__ModuleLoader__.load({
       'newConnection': 'New connection',
       'refresh': 'Refresh',
       'edit': 'Edit',
+      'copy': 'Duplicate connection',
+      'copy.suffix': 'copy',
       'conn.start': 'Start',
       'conn.stop': 'Stop',
       'conn.starting': 'Connecting…',
@@ -154,6 +155,7 @@ window.__ModuleLoader__.load({
       'confirmDelete': 'Delete connection "{label}"? Its stored password is removed too.',
       'form.titleNew': 'New connection',
       'form.titleEdit': 'Edit connection',
+      'form.titleDuplicate': 'Duplicate connection',
       'form.id': 'Identifier (id)',
       'form.idHint': 'Letters, digits, _ . -; fixed after saving; the agent references connections by it',
       'form.label': 'Name',
@@ -241,6 +243,8 @@ window.__ModuleLoader__.load({
       'cols.name': 'Name',
       'cols.type': 'Type',
       'cols.null': 'Null',
+      'cols.yes': 'Yes',
+      'cols.no': 'No',
       'cols.key': 'Key',
       'cols.default': 'Default',
       'cols.extra': 'Extra',
@@ -256,10 +260,8 @@ window.__ModuleLoader__.load({
       'form.aclOptional': '(ACL, optional)',
     }
 
-    // Survives panel remounts: where the user was, never what the server returned.
+    // Remount keeps the user's place, not server data.
     const viewState = { tabs: [], activeId: null, views: {} }
-
-    // ---------- data ----------
 
     async function parseBody(res) {
       let body = null
@@ -311,9 +313,6 @@ window.__ModuleLoader__.load({
       return s
     }
 
-    // ---------- virtualized list helpers ----------
-
-    /** Windowed rendering: only the visible slice of a long list hits the DOM. */
     function useWindowed(total, rowHeight, overscan = 10) {
       const ref = useRef(null)
       const [range, setRange] = useState({ start: 0, end: Math.min(total, 50) })
@@ -328,8 +327,6 @@ window.__ModuleLoader__.load({
       return { ref, range, onScroll: update }
     }
 
-    // ---------- small components ----------
-
     function DbPanelIcon({ size }) {
       const s = size ?? 16
       return h('svg', { width: s, height: s, viewBox: '0 0 36 36', 'aria-hidden': true, style: { display: 'block' } },
@@ -340,7 +337,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** Vendor type → engine family (mirrors the Host half); styling follows the family. */
     const FAMILY = {
       mysql: 'mysql', 'tdsql-mysql': 'mysql', goldendb: 'mysql',
       postgres: 'postgres', 'tdsql-pg': 'postgres',
@@ -426,7 +422,6 @@ window.__ModuleLoader__.load({
       const { ref, range, onScroll } = useWindowed(rows.length, GRID_ROW_H)
       const topH = range.start * GRID_ROW_H
       const bottomH = Math.max(0, (rows.length - range.end) * GRID_ROW_H)
-      // tabindex + region: keyboard users can scroll the grid without a mouse.
       return h('div', { className: 'dbb-grid-scroll' + (wide ? ' dbb-grid-scroll-wide' : ''), ref, onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'data grid' },
         h('table', { className: 'dbb-grid' + (wide ? ' dbb-grid-wide' : '') },
           h('thead', null, h('tr', null, columns.map((c, i) => h('th', { key: i }, String(c))))),
@@ -446,25 +441,21 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ---------- connection form ----------
-
     function ConnectionForm({ initial, onClose, onSaved, onDelete, onSaveUncertain, t }) {
       const isEdit = Boolean(initial?.id)
+      // A prefilled object without id is a duplicate: id is fixed after save, and the panel never has the password.
+      const isDuplicate = Boolean(initial) && !isEdit
       const dialogRef = useRef(null)
       const onCloseRef = useRef(onClose)
       onCloseRef.current = onClose
-      // Native <dialog>: showModal gives focus containment, Esc/back-gesture
-      // dismissal and top-layer rendering for free; the close event is the one
-      // place that syncs React state, however the dialog went away.
       useEffect(() => {
         const dlg = dialogRef.current
         if (!dlg) return
         if (!dlg.open) dlg.showModal()
         const syncClose = () => onCloseRef.current()
         dlg.addEventListener('close', syncClose)
-        // closedby="any" covers click-outside in supporting browsers; where it
-        // is missing, compare pointer coordinates with the dialog rect (the
-        // dialog is the event target for its own padding, so target checks lie).
+        // The dialog is the target of clicks on its own padding, so hit-test the rect.
+        // Browsers with closedBy already dismiss outside clicks.
         let pressedOutside = false
         const outside = (e) => {
           const r = dlg.getBoundingClientRect()
@@ -544,8 +535,7 @@ window.__ModuleLoader__.load({
             onSaved(connection.id)
           }
         } catch (error) {
-          // Saving restarts the Host plugin and can cut this response even
-          // though the connection was stored; let the panel verify first.
+          // Saving restarts the Host plugin and can drop this response after the row was stored.
           if (op === 'save' && (await onSaveUncertain(connection.id))) return
           setOutcome({ ok: false, text: `${t('form.testFail')}: ${error.message}` })
         } finally {
@@ -563,7 +553,7 @@ window.__ModuleLoader__.load({
           className: 'dbb-modal', ref: dialogRef, closedby: 'any',
           'aria-labelledby': 'dbb-conn-form-title',
         },
-          h('div', { className: 'dbb-modal-title', id: 'dbb-conn-form-title' }, isEdit ? t('form.titleEdit') : t('form.titleNew')),
+          h('div', { className: 'dbb-modal-title', id: 'dbb-conn-form-title' }, isEdit ? t('form.titleEdit') : isDuplicate ? t('form.titleDuplicate') : t('form.titleNew')),
           h('div', { className: 'dbb-modal-body' },
             field('form.type', h('select', {
               className: 'dbb-input', value: draft.type,
@@ -614,8 +604,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ---------- SQL connection view ----------
-
     function SqlPane({ conn, seed, clearSeed, allowWrites, t }) {
       const [sql, setSql] = useState('')
       const [running, setRunning] = useState(false)
@@ -635,7 +623,6 @@ window.__ModuleLoader__.load({
       }
       const runRef = useRef(run)
       runRef.current = run
-      // A table view's "query in editor" seeds one generated, auto-run SELECT per click.
       useEffect(() => {
         if (!seed || seed.connId !== conn.id) return
         const family = FAMILY[conn.type]
@@ -720,7 +707,7 @@ window.__ModuleLoader__.load({
                     h('tr', { key: i },
                       h('td', { className: 'dbb-muted' }, i + 1),
                       h('td', null, c.name), h('td', null, c.type),
-                      h('td', null, c.nullable ? 'YES' : 'NO'), h('td', null, c.key ?? ''),
+                      h('td', null, c.nullable ? t('cols.yes') : t('cols.no')), h('td', null, c.key ?? ''),
                       h('td', null, c.default === null || c.default === undefined ? '' : String(c.default)),
                       h('td', null, c.extra ?? '')))),
                 ),
@@ -737,7 +724,7 @@ window.__ModuleLoader__.load({
                     h('tr', { key: i },
                       h('td', null, idx.name),
                       h('td', { title: idx.columns.join(', ') }, idx.columns.join(', ')),
-                      h('td', null, idx.unique ? 'YES' : 'NO'),
+                      h('td', null, idx.unique ? t('cols.yes') : t('cols.no')),
                       h('td', null, idx.type ?? '')))),
                 ),
               ),
@@ -760,8 +747,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ---------- routines view (stored procedures / functions) ----------
-
     function RoutinesView({ conn, allowWrites, t }) {
       const [schemas, setSchemas] = useState(null)
       const [schema, setSchema] = useState(null)
@@ -776,7 +761,6 @@ window.__ModuleLoader__.load({
       const reqSeq = useRef(0)
       const [nonce, setNonce] = useState(0)
 
-      // Schemas (Oracle/PG) or databases (MySQL family) come from the same op the tree uses.
       useEffect(() => {
         let alive = true
         setSchemas(null); setSchema(null); setRoutines(null); setSelected(null); setSource(null); setListError(null)
@@ -851,8 +835,6 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dbb-routines-body' },
           h('div', { className: 'dbb-routines-list' },
             schemas === null && listError
-              // First load failed (e.g. connection dropped): offer a retry
-              // instead of a spinner that never resolves.
               ? h('div', { className: 'dbb-muted dbb-pad' },
                   h('button', { className: 'dbb-btn', onClick: () => setNonce((n) => n + 1) }, t('tree.retry')))
               : routines === null
@@ -900,8 +882,6 @@ window.__ModuleLoader__.load({
         ),
       )
     }
-
-    // ---------- Redis view ----------
 
     function RedisValue({ info, t }) {
       if (!info) return null
@@ -969,7 +949,7 @@ window.__ModuleLoader__.load({
           setKeys(r.keys); setTruncated(r.truncated)
         } catch (e) { setError(e) } finally { setScanning(false) }
       }, [conn.id])
-      // Scan once per selected connection; re-scanning is the Scan button's job.
+      // scan's identity changes with the connection, not with the pattern field.
       useEffect(() => { setKeys(null); setSelected(null); setValue(null); scan() }, [scan])
 
       const [dbsize, setDbsize] = useState(null)
@@ -1016,8 +996,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ---------- tree ----------
-
     function TreeNode({ depth, label, badge, trailing, expanded, loading, error, selected, onToggle, onClick, children, t }) {
       return h('div', null,
         h('div', {
@@ -1038,7 +1016,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** Table list under one database node: filter box + display cap for huge schemas. */
     function TableItems({ items, renderItem, t }) {
       const [filter, setFilter] = useState('')
       const needle = filter.trim().toLowerCase()
@@ -1054,8 +1031,6 @@ window.__ModuleLoader__.load({
           : null,
       ]
     }
-
-    // ---------- panel ----------
 
     const CSS = `
 .dbb-root{display:flex;flex-direction:column;height:100%;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:13px;overflow:hidden}
@@ -1197,6 +1172,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
         setActiveId(nextActive)
       }
       const focusTab = (id, view) => {
+        // Omitting view keeps the tab's current page.
         const nextTabs = tabsRef.current.includes(id) ? tabsRef.current : [...tabsRef.current, id]
         const nextViews = view ? { ...viewsRef.current, [id]: view } : viewsRef.current
         publishTabs(nextTabs, id, nextViews)
@@ -1228,16 +1204,12 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
 
       useEffect(() => { refresh() }, [refresh])
 
-      // Keep the selected connection tab visible when the strip overflows
-      // (selection can change without the pointer, e.g. after a tree click).
       const rootRef = useRef(null)
       useEffect(() => {
         rootRef.current?.querySelector('.dbb-tab[aria-selected="true"]')
           ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', container: 'nearest' })
       }, [activeId])
 
-      // Remount restore: jump back to the previously selected connection/table
-      // once the fresh connection list arrives (data itself is always refetched).
       useEffect(() => {
         if (!data || restoredRef.current) return
         restoredRef.current = true
@@ -1254,8 +1226,6 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
 
       const loadDatabases = async (conn) => {
         const key = nodeKey('conn', conn.id)
-        // Clear needStart: once a real load begins the node is no longer in
-        // the "stopped, offer the start button" state, or collapse stays blocked.
         patchTree(key, { expanded: true, loading: true, error: null, needStart: false })
         try {
           const r = await call('list-databases', { id: conn.id })
@@ -1265,12 +1235,9 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
       const toggleDatabases = (conn) => {
         const key = nodeKey('conn', conn.id)
         const node = tree[key] ?? {}
-        // A failed load keeps the node expanded; toggling then retries instead
-        // of collapsing. needStart is collapse-safe: re-expanding a stopped
-        // connection just offers the start button again.
         if (node.expanded && !node.error) { patchTree(key, { expanded: false }); return }
+        // A failed load stays expanded so the next toggle retries. A stopped connection expands to the start button.
         if (conn.status !== 'open') {
-          // Manual-start model: expanding a stopped connection offers the start button.
           patchTree(key, { expanded: true, loading: false, error: null, needStart: true })
           return
         }
@@ -1319,8 +1286,6 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
         try {
           await call('delete-connection', { id: conn.id })
         } catch (e) {
-          // The delete restarts the Host plugin and may cut the response; the
-          // readback below decides whether it actually went away.
           callError = e
         }
         try {
@@ -1334,8 +1299,13 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
         } catch (e) { setFatal(e) }
       }
 
+      const duplicateConn = (conn) => {
+        const { id, hasPassword, status, family, ...rest } = conn
+        setEditing({ ...rest, label: `${conn.label} ${t('copy.suffix')}` })
+      }
+
       const verifySaved = async (id) => {
-        // The config save restarts the Host plugin; give it a few chances.
+        // Saving restarts the plugin, so the new row may not be visible on the first read.
         for (let attempt = 0; attempt < 5; attempt += 1) {
           await new Promise((r) => setTimeout(r, 600))
           try {
@@ -1366,6 +1336,10 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
             className: 'dbb-icon-btn', title: t('edit'),
             onClick: () => setEditing({ ...conn }),
           }, '✎'),
+          h('button', {
+            className: 'dbb-icon-btn', title: t('copy'),
+            onClick: () => duplicateConn(conn),
+          }, '⧉'),
         )
         return h(TreeNode, {
           key: conn.id, depth: 0, label: conn.label, t,
@@ -1377,8 +1351,6 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
           selected: connSelected,
           onToggle: isSql ? () => toggleDatabases(conn) : undefined,
           onClick: () => {
-            // No view argument: an already-open tab keeps what it shows (a
-            // table view must not snap back to the SQL editor on a row click).
             focusTab(conn.id)
             if (isSql && !(tree[key] ?? {}).expanded) toggleDatabases(conn)
           },
@@ -1425,8 +1397,6 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
           })
         }
         if (conn.type === 'redis') return h(RedisView, { key: conn.id, conn, t })
-        // Stored procedures only exist where the vendor supports them; the
-        // feature matrix hides this sub-tab entirely for TDSQL / GoldenDB.
         const strip = conn.features?.procedures
           ? h('div', { className: 'dbb-subtabs', role: 'tablist', 'aria-label': conn.label || conn.id },
               h('button', {
@@ -1522,7 +1492,8 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
         ),
         editing !== null
           ? h(ConnectionForm, {
-              initial: editing && editing.id ? editing : null,
+              // {} is a blank form. An object without id is a duplicate.
+              initial: editing && Object.keys(editing).length > 0 ? editing : null,
               t,
               onClose: () => setEditing(null),
               onDelete: async (conn) => { setEditing(null); await removeConn(conn) },
@@ -1540,8 +1511,6 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
           : null,
       )
     }
-
-    /** One component owns the SQL editor; see SqlPane above. */
 
     return {
       name: 'db-browser',
