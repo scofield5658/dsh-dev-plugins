@@ -107,6 +107,8 @@ const ConnectionConfig = Schema.object({
   masterName: Schema.string(),
   db: Schema.number().min(0),
   username: Schema.string(),
+  poolMax: Schema.number().min(1).max(50),
+  allowWrites: Schema.boolean(),
 })
 
 const FeatureOverride = Schema.object({
@@ -165,6 +167,13 @@ function assertReadOnlySql(sql, allowWrites) {
   }
 }
 
+function applyRuntimeOptions(out, raw) {
+  const pool = typeof raw.poolMax === 'string' && raw.poolMax.trim() !== '' ? Number(raw.poolMax) : raw.poolMax
+  if (Number.isInteger(pool) && pool >= 1 && pool <= 50) out.poolMax = pool
+  if (typeof raw.allowWrites === 'boolean') out.allowWrites = raw.allowWrites
+  return out
+}
+
 function normalizeHosts(raw, fallbackPort) {
   const list = Array.isArray(raw) ? raw : []
   const hosts = []
@@ -199,7 +208,7 @@ function normalizeConnection(raw) {
     }
     if (Number.isInteger(raw.db) && raw.db >= 0) out.db = raw.db
     if (typeof raw.username === 'string' && raw.username !== '') out.username = raw.username
-    return out
+    return applyRuntimeOptions(out, raw)
   }
   out.hosts = normalizeHosts(raw.hosts, DEFAULT_PORT[family])
   if (out.hosts.length === 0) fail('bad-request', 'connection needs at least one host')
@@ -215,13 +224,17 @@ function normalizeConnection(raw) {
       if (!out.serviceName && !out.sid) fail('bad-request', 'oracle connection needs serviceName, sid, or connectString')
     }
   }
-  return out
+  return applyRuntimeOptions(out, raw)
 }
 
 // No password field: the panel and tools never receive a secret.
 function sanitize(c) {
   const { id, type, label } = c
-  const base = { id, type, family: FAMILY[type], label, hosts: c.hosts }
+  const base = {
+    id, type, family: FAMILY[type], label, hosts: c.hosts,
+    poolMax: c.poolMax ?? null,
+    allowWrites: typeof c.allowWrites === 'boolean' ? c.allowWrites : null,
+  }
   if (FAMILY[type] === 'mysql' || FAMILY[type] === 'postgres') return { ...base, user: c.user, database: c.database ?? null }
   if (type === 'oracle') return { ...base, user: c.user, serviceName: c.serviceName ?? null, sid: c.sid ?? null, connectString: c.connectString ?? null }
   return { ...base, mode: c.mode, db: c.db ?? 0, username: c.username ?? null, masterName: c.masterName ?? null }
@@ -296,7 +309,7 @@ class DbCore {
     this.ctx = ctx
     this.closed = false
     this.oracleClientLib = typeof config?.oracleClientLib === 'string' && config.oracleClientLib !== '' ? config.oracleClientLib : undefined
-    this.maxRows = Number.isInteger(config?.maxRows) && config.maxRows > 0 ? Math.min(config.maxRows, 10000) : 500
+    this.maxRows = Number.isInteger(config?.maxRows) && config.maxRows > 0 ? Math.min(config.maxRows, 1000) : 500
     this.queryTimeoutMs = Number.isInteger(config?.queryTimeoutMs) && config.queryTimeoutMs > 0 ? config.queryTimeoutMs : 30000
     this.allowWrites = config?.allowWrites === true
     this.poolMax = Number.isInteger(config?.poolMax) && config.poolMax >= 1 ? Math.min(config.poolMax, 50) : 4
@@ -308,6 +321,14 @@ class DbCore {
       const c = normalizeConnection(raw)
       this.connections.set(c.id, c)
     }
+  }
+
+  poolLimit(c) {
+    return Number.isInteger(c?.poolMax) && c.poolMax >= 1 && c.poolMax <= 50 ? c.poolMax : this.poolMax
+  }
+
+  writesAllowed(c) {
+    return typeof c?.allowWrites === 'boolean' ? c.allowWrites : this.allowWrites
   }
 
   featuresOf(c) {
@@ -356,8 +377,7 @@ class DbCore {
     const entry = this.ctx.fiber?.entry
     const editor = this.ctx.get('configEditor')
     if (!entry || !editor) fail('no-config-editor', 'Configuration cannot be saved in this profile; edit the plugin config in cordis.patch.yml instead')
-    const rows = [...this.connections.values()].filter((c) => c.id !== next.id).concat(next)
-    await editor.edit(entry, (current) => ({ ...current, connections: rows }))
+    await editor.edit(entry, (current) => ({ ...current, connections: (current.connections ?? []).filter(c => c.id !== next.id).concat(next) }))
     return { saved: next.id }
   }
 
@@ -366,8 +386,7 @@ class DbCore {
     const editor = this.ctx.get('configEditor')
     if (!entry || !editor) fail('no-config-editor', 'Configuration cannot be saved in this profile')
     this.get(id)
-    const rows = [...this.connections.values()].filter((c) => c.id !== id)
-    await editor.edit(entry, (current) => ({ ...current, connections: rows }))
+    await editor.edit(entry, (current) => ({ ...current, connections: (current.connections ?? []).filter(c => c.id !== id) }))
     return { deleted: id }
   }
 
@@ -395,7 +414,7 @@ class DbCore {
           database: c.database,
           connectTimeout: 8000,
           waitForConnections: true,
-          connectionLimit: core.poolMax,
+          connectionLimit: core.poolLimit(c),
           queueLimit: 0,
           multipleStatements: false,
           dateStrings: true,
@@ -447,7 +466,7 @@ class DbCore {
           user: c.user,
           password,
           database: c.database ?? 'postgres',
-          max: core.poolMax,
+          max: core.poolLimit(c),
           connectionTimeoutMillis: 8000,
           idleTimeoutMillis: 60000,
           keepAlive: true,
@@ -494,7 +513,7 @@ class DbCore {
         password,
         connectString: this.oracleConnectString(c),
         poolMin: 0,
-        poolMax: core.poolMax,
+        poolMax: core.poolLimit(c),
         poolIncrement: 1,
         poolTimeout: 60,
         connectTimeout: 8,
@@ -691,8 +710,8 @@ class DbCore {
   }
 
   async mysqlQuery(c, sql, maxRows, offset = 0) {
-    assertReadOnlySql(sql, this.allowWrites)
-    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
+    assertReadOnlySql(sql, this.writesAllowed(c))
+    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 1000)
     const off = Math.max(0, Math.floor(offset) || 0)
     const kind = statementKind(sql)
     const pageable = kind === 'query'
@@ -783,8 +802,8 @@ class DbCore {
   }
 
   async pgQuery(c, sql, maxRows, offset = 0) {
-    assertReadOnlySql(sql, this.allowWrites)
-    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
+    assertReadOnlySql(sql, this.writesAllowed(c))
+    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 1000)
     const off = Math.max(0, Math.floor(offset) || 0)
     const kind = statementKind(sql)
     const pageable = kind === 'query'
@@ -899,7 +918,7 @@ class DbCore {
   async mysqlCallRoutine(c, database, name, args) {
     const db = database ?? c.database
     if (!db || !name) fail('bad-request', 'database and object are required')
-    if (!this.allowWrites) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true in the plugin configuration to enable it.')
+    if (!this.writesAllowed(c)) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true on this connection or in the plugin configuration to enable it.')
     const argv = Array.isArray(args) ? args.map(String) : []
     if (argv.length > 32) fail('bad-request', 'too many routine arguments')
     return this.runOn(c, async (h) => {
@@ -942,7 +961,7 @@ class DbCore {
 
   async pgCallRoutine(c, schema, name, args) {
     if (!schema || !name) fail('bad-request', 'schema and object are required')
-    if (!this.allowWrites) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true in the plugin configuration to enable it.')
+    if (!this.writesAllowed(c)) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true on this connection or in the plugin configuration to enable it.')
     const kind = await this.pgQueryRows(c,
       `SELECT p.prokind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname = '${quoted(schema)}' AND p.proname = '${quoted(name)}' AND p.prokind IN ('p', 'f') LIMIT 1`)
@@ -970,7 +989,7 @@ class DbCore {
   }
 
   async oracleExecute(c, sql, maxRows, binds = []) {
-    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
+    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 1000)
     return this.runOn(c, (h) => h.run(async (conn) => {
       const oracledb = h.driver
       const run = conn.execute(sql, binds, {
@@ -1002,10 +1021,10 @@ class DbCore {
   }
 
   async oracleQuery(c, sql, maxRows, offset = 0) {
-    assertReadOnlySql(sql, this.allowWrites)
+    assertReadOnlySql(sql, this.writesAllowed(c))
     const kind = statementKind(sql)
     const pageable = kind === 'query'
-    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 10000)
+    const cap = Math.min(Math.max(1, maxRows ?? this.maxRows), 1000)
     const off = Math.max(0, Math.floor(offset) || 0)
     const effective = pageable && SELECT_HEAD.test(sql) ? paginateSelect(sql, 'oracle', off, cap) : sql
     const result = await this.oracleExecute(c, effective, cap)
@@ -1074,7 +1093,7 @@ class DbCore {
 
   async oracleCallRoutine(c, schema, name, args) {
     if (!schema || !name) fail('bad-request', 'schema and object are required')
-    if (!this.allowWrites) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true in the plugin configuration to enable it.')
+    if (!this.writesAllowed(c)) fail('readonly', 'Executing a routine can modify data. Set allowWrites: true on this connection or in the plugin configuration to enable it.')
     const type = await this.oracleExecute(c,
       `SELECT OBJECT_TYPE FROM ALL_OBJECTS WHERE OWNER='${quoted(schema)}' AND OBJECT_NAME='${quoted(name)}' AND OBJECT_TYPE IN ('PROCEDURE','FUNCTION','PACKAGE')`,
       1)
@@ -1109,33 +1128,14 @@ class DbCore {
     })
   }
 
-  redisKeys(c, pattern, limit) {
-    const match = typeof pattern === 'string' && pattern !== '' ? pattern : '*'
-    const cap = Math.min(Math.max(1, limit ?? 500), 5000)
-    return this.runOn(c, async (h) => {
-      const r = h.client()
-      const masters = c.mode === 'cluster' ? r.nodes('master') : [r]
-      const keys = []
-      let truncated = false
-      for (const node of masters) {
-        let cursor = '0'
-        do {
-          const [next, batch] = await node.scan(cursor, 'MATCH', match, 'COUNT', 200)
-          cursor = next
-          for (const key of batch) {
-            if (keys.length >= cap) { truncated = true; break }
-            keys.push(key)
-          }
-          if (truncated) break
-        } while (cursor !== '0')
-        if (truncated) break
-      }
-      keys.sort()
-      return { pattern: match, keys, truncated }
-    })
+  redisKeys(c, pattern, limit, cursor) {
+    const match = typeof pattern === 'string' ? pattern.trim() : ''
+    if (match === '') fail('bad-request', 'pattern is required; use a glob such as prefix* (a bare scan of every key is not run automatically)')
+    const cap = pageLimit(limit)
+    return this.runOn(c, async (h) => scanRedisKeys(h.client(), { mode: c.mode, pattern: match, limit: cap, cursor }))
   }
 
-  redisGet(c, key) {
+  redisGet(c, key, options = {}) {
     if (typeof key !== 'string' || key === '') fail('bad-request', 'key is required')
     return this.runOn(c, async (h) => {
       const r = h.client()
@@ -1143,56 +1143,36 @@ class DbCore {
       const [ttl, pttl] = await Promise.all([r.ttl(key), r.pttl(key)])
       const base = { key, type, ttl, pttl }
       if (type === 'none') return { ...base, exists: false, value: null }
-      if (type === 'string') {
-        const length = await r.strlen(key)
-        const cap = 65536
-        const value = await r.getrange(key, 0, cap - 1)
-        return { ...base, exists: true, length, value, truncated: length > cap }
+      const limit = pageLimit(options.limit)
+      const state = decodeCursor(options.cursor)
+      const offset = Number(state.offset ?? 0)
+      if (!Number.isSafeInteger(offset) || offset < 0) fail('bad-request', 'Invalid offset')
+      let length, value, valueBase64, nextCursor = null
+      if (type === 'hash' || type === 'set') {
+        length = await r[type === 'hash' ? 'hlen' : 'scard'](key)
+        const page = await scanPage(r, type === 'hash' ? 'HSCAN' : 'SSCAN', key, '*', limit, state, type === 'hash' ? 2 : 1)
+        value = type === 'hash' ? Object.fromEntries(page.items) : page.items
+        nextCursor = page.nextCursor
+      } else if (type === 'string') {
+        length = await r.strlen(key)
+        // Strings have no rows: use bounded byte chunks instead of GET.
+        const bytes = await r.getrangeBuffer(key, offset, offset + 65535)
+        valueBase64 = bytes.toString('base64')
+        value = bytes.toString('utf8')
+        if (offset + 65536 < length) nextCursor = encodeCursor({ offset: offset + 65536 })
+      } else if (type === 'list' || type === 'zset') {
+        length = await r[type === 'list' ? 'llen' : 'zcard'](key)
+        const flat = type === 'list' ? await r.lrange(key, offset, offset + limit - 1) : await r.zrange(key, offset, offset + limit - 1, 'WITHSCORES')
+        value = type === 'list' ? flat : Array.from({ length: flat.length / 2 }, (_, i) => ({ member: flat[i * 2], score: flat[i * 2 + 1] }))
+        if (offset + value.length < length) nextCursor = encodeCursor({ offset: offset + value.length })
+      } else if (type === 'stream') {
+        length = await r.xlen(key)
+        value = await r.xrange(key, state.after ? '(' + state.after : '-', '+', 'COUNT', limit)
+        if (value.length === limit) nextCursor = encodeCursor({ after: value.at(-1)[0] })
+      } else {
+        return { ...base, exists: true, value: `(type ${type} is not previewable)` }
       }
-      if (type === 'hash') {
-        const length = await r.hlen(key)
-        const value = {}
-        let count = 0
-        let cursor = '0'
-        do {
-          const [next, batch] = await r.hscan(key, cursor, 'COUNT', 200)
-          cursor = next
-          for (let i = 0; i + 1 < batch.length && count < 500; i += 2) {
-            value[batch[i]] = batch[i + 1]
-            count += 1
-          }
-          if (count >= 500) break
-        } while (cursor !== '0')
-        return { ...base, exists: true, length, value, truncated: count < length }
-      }
-      if (type === 'list') {
-        const length = await r.llen(key)
-        return { ...base, exists: true, length, value: await r.lrange(key, 0, 199), truncated: length > 200 }
-      }
-      if (type === 'set') {
-        const length = await r.scard(key)
-        const value = []
-        let cursor = '0'
-        do {
-          const [next, batch] = await r.sscan(key, cursor, 'COUNT', 200)
-          cursor = next
-          value.push(...batch)
-          if (value.length >= 500) break
-        } while (cursor !== '0')
-        return { ...base, exists: true, length, value, truncated: value.length < length }
-      }
-      if (type === 'zset') {
-        const length = await r.zcard(key)
-        const flat = await r.zrange(key, 0, 199, 'WITHSCORES')
-        const value = []
-        for (let i = 0; i + 1 < flat.length; i += 2) value.push({ member: flat[i], score: flat[i + 1] })
-        return { ...base, exists: true, length, value, truncated: length > 200 }
-      }
-      if (type === 'stream') {
-        const length = await r.xlen(key)
-        const entries = await r.xrange(key, '-', '+', 'COUNT', 100)
-        return { ...base, exists: true, length, value: entries, truncated: length > 100 }
-      }
+      return { ...base, exists: true, length, value, ...(valueBase64 === undefined ? {} : { valueBase64 }), nextCursor, truncated: nextCursor !== null }
       return { ...base, exists: true, value: `(type ${type} is not previewable)` }
     })
   }
@@ -1200,8 +1180,8 @@ class DbCore {
   redisCommand(c, command, args) {
     const cmd = typeof command === 'string' ? command.trim().toUpperCase() : ''
     if (!cmd) fail('bad-request', 'command is required')
-    if (!this.allowWrites && !REDIS_READONLY.has(cmd)) {
-      fail('readonly', `Redis command ${cmd} is not in the read-only allowlist. Set allowWrites: true in the plugin configuration to enable writes.`)
+    if (!this.writesAllowed(c) && !REDIS_READONLY.has(cmd)) {
+      fail('readonly', `Redis command ${cmd} is not in the read-only allowlist. Set allowWrites: true on this connection or in the plugin configuration to enable writes.`)
     }
     const argv = Array.isArray(args) ? args.map(String) : []
     if (argv.length > 64) fail('bad-request', 'too many command arguments')
@@ -1268,8 +1248,8 @@ class DbCore {
     const c = this.get(id)
     if (c.type !== 'redis') fail('bad-request', `Connection ${id} is ${c.type}, not redis`)
     if (action === 'info') return this.redisInfo(c)
-    if (action === 'keys') return this.redisKeys(c, args.pattern, args.limit)
-    if (action === 'get') return this.redisGet(c, args.key)
+    if (action === 'keys') return this.redisKeys(c, args.pattern, args.limit, args.cursor)
+    if (action === 'get') return this.redisGet(c, args.key, args)
     if (action === 'ttl') return this.runOn(c, async (h) => ({ key: args.key, ttl: await h.client().ttl(args.key), pttl: await h.client().pttl(args.key) }))
     if (action === 'dbsize') return this.runOn(c, async (h) => ({ dbsize: await h.client().dbsize() }))
     if (action === 'command') return this.redisCommand(c, args.command, args.args)
@@ -1360,7 +1340,7 @@ function registerHttp(ctx, core) {
         if (op === 'connections' && req.method === 'GET') {
           const items = []
           for (const c of core.list()) items.push({ ...c, hasPassword: await core.hasPassword(c.id), status: core.statusOf(c.id) })
-          reply(200, { ok: true, value: { connections: items, allowWrites: core.allowWrites, maxRows: core.maxRows } })
+          reply(200, { ok: true, value: { connections: items, allowWrites: core.allowWrites, poolMax: core.poolMax, maxRows: core.maxRows } })
           return
         }
         if (req.method !== 'POST') { reply(405, { ok: false, error: { code: 'method-not-allowed', message: 'POST required' } }); return }
@@ -1445,6 +1425,8 @@ function dbToolDefinition(core) {
       'list_routines / show_routine (connection, database, object) — stored procedures and functions, only on connection types',
       'whose features.procedures is true in list_connections (TDSQL and GoldenDB do not support them);',
       'call_routine (connection, database, object, optional args — IN arguments as strings) executes a procedure and needs allowWrites.',
+      'save_connection creates or replaces a connection (including redis). Optional poolMax (1-50) and allowWrites apply only to that connection;',
+      'omit them to keep the plugin defaults. password is stored in the credential store and is not returned.',
       'The database argument means schema/owner for Oracle and PostgreSQL connections, database name for the MySQL family.',
       'Connections come from the Database browser plugin; ask the user to add one in the sidebar panel when none fit.',
       'Read-only by default: only SELECT/SHOW/DESC/EXPLAIN/WITH, one statement per call.',
@@ -1452,7 +1434,7 @@ function dbToolDefinition(core) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_connections', 'connect', 'disconnect', 'list_databases', 'list_tables', 'describe_table', 'list_indexes', 'preview_table', 'show_create', 'query', 'list_routines', 'show_routine', 'call_routine'], description: 'Operation to run.' },
+        action: { type: 'string', enum: ['list_connections', 'connect', 'disconnect', 'list_databases', 'list_tables', 'describe_table', 'list_indexes', 'preview_table', 'show_create', 'query', 'list_routines', 'show_routine', 'call_routine', 'save_connection'], description: 'Operation to run.' },
         connection: { type: 'string', description: 'Connection id from list_connections.' },
         database: { type: 'string', description: 'Database (MySQL family) or schema/owner (Oracle, PostgreSQL).' },
         table: { type: 'string', description: 'Table name.' },
@@ -1460,8 +1442,24 @@ function dbToolDefinition(core) {
         kind: { type: 'string', description: 'Routine kind for show_routine on Oracle (procedure/function/package); needed when a package shares its name.' },
         args: { type: 'array', items: { type: 'string' }, description: 'IN arguments for call_routine, in declaration order, passed as strings.' },
         sql: { type: 'string', description: 'One SQL statement for action=query.' },
-        maxRows: { type: 'number', description: 'Row cap per page (default from plugin config, max 10000).' },
+        maxRows: { type: 'number', description: 'Row cap per page (default from plugin config, max 1000).' },
         offset: { type: 'number', description: 'Zero-based row offset for pagination; combine with maxRows and the returned truncated flag (true = more rows available).' },
+        id: { type: 'string', description: 'Connection id for save_connection.' },
+        type: { type: 'string', description: 'Connection type for save_connection: mysql, tdsql-mysql, goldendb, postgres, tdsql-pg, oracle, or redis.' },
+        label: { type: 'string', description: 'Display name for save_connection.' },
+        hosts: { type: 'array', items: { type: 'object', properties: { host: { type: 'string' }, port: { type: 'number' } }, required: ['host'] }, description: 'Hosts for save_connection. Separate addresses with commas in the panel; pass objects here.' },
+        user: { type: 'string', description: 'SQL user for save_connection.' },
+        database: { type: 'string', description: 'Default database for save_connection.' },
+        serviceName: { type: 'string', description: 'Oracle service name for save_connection.' },
+        sid: { type: 'string', description: 'Oracle SID for save_connection.' },
+        connectString: { type: 'string', description: 'Oracle connect string for save_connection. Wins over hosts.' },
+        mode: { type: 'string', description: 'Redis mode for save_connection: standalone, sentinel, or cluster.' },
+        masterName: { type: 'string', description: 'Redis Sentinel master name for save_connection.' },
+        db: { type: 'number', description: 'Redis database index for save_connection.' },
+        username: { type: 'string', description: 'Redis ACL username for save_connection.' },
+        poolMax: { type: 'number', description: 'Optional per-connection pool size, 1-50, for save_connection. Omit to use the plugin poolMax.' },
+        allowWrites: { type: 'boolean', description: 'Optional per-connection write switch for save_connection. Omit to use the plugin allowWrites. Default remains read-only.' },
+        password: { type: 'string', description: 'Password for save_connection. Stored in the credential store only; never written to config or returned.' },
       },
       required: ['action'],
       additionalProperties: false,
@@ -1471,8 +1469,9 @@ function dbToolDefinition(core) {
     async execute(args) {
       const action = args?.action
       if (action === 'list_connections') {
-        return { connections: core.list().map((c) => ({ ...c, status: core.statusOf(c.id) })), allowWrites: core.allowWrites }
+        return { connections: core.list().map((c) => ({ ...c, status: core.statusOf(c.id) })), allowWrites: core.allowWrites, poolMax: core.poolMax }
       }
+      if (action === 'save_connection') return saveConnectionFromAgent(core, args)
       if (action === 'connect') return core.startConnection(args?.connection)
       if (action === 'disconnect') return core.stopConnection(args?.connection)
       const id = args?.connection
@@ -1482,15 +1481,43 @@ function dbToolDefinition(core) {
   }
 }
 
+async function saveConnectionFromAgent(core, args) {
+  const raw = {
+    id: args?.id,
+    type: args?.type,
+    label: args?.label,
+    hosts: args?.hosts,
+    user: args?.user,
+    database: args?.database,
+    serviceName: args?.serviceName,
+    sid: args?.sid,
+    connectString: args?.connectString,
+    mode: args?.mode,
+    masterName: args?.masterName,
+    db: args?.db,
+    username: args?.username,
+  }
+  if (args?.poolMax !== undefined && args?.poolMax !== null) raw.poolMax = args.poolMax
+  if (typeof args?.allowWrites === 'boolean') raw.allowWrites = args.allowWrites
+  const next = normalizeConnection(raw)
+  await core.saveConnection(next)
+  if (typeof args?.password === 'string' && args.password !== '') await core.savePassword(next.id, args.password)
+  return {
+    saved: next.id,
+    poolMax: next.poolMax ?? null,
+    allowWrites: typeof next.allowWrites === 'boolean' ? next.allowWrites : null,
+  }
+}
+
 function redisToolDefinition(core) {
   return {
     name: 'redis_browser',
     description: [
       'Inspect a configured Redis connection (standalone, Sentinel, or Cluster).',
       'The connection must be started first (status in db_browser list_connections); connect/disconnect control it.',
-      'Actions: info (connection); keys (connection, optional pattern, optional limit <= 5000) — SCAN-based, safe on large keyspaces;',
-      'get (connection, key) — type-aware value with TTL; ttl (connection, key); dbsize (connection);',
-      'command (connection, command, args) — read-only commands only unless the plugin has allowWrites enabled.',
+      'Actions: info (connection); keys (connection, optional pattern, optional limit <= 1000) — SCAN-based, safe on large keyspaces;',
+      'get (connection, key, optional limit/cursor) — paged type-aware value with TTL; ttl (connection, key); dbsize (connection);',
+      'command (connection, command, args) — read-only commands only unless that connection or the plugin has allowWrites enabled.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -1498,7 +1525,8 @@ function redisToolDefinition(core) {
         action: { type: 'string', enum: ['connect', 'disconnect', 'info', 'keys', 'get', 'ttl', 'dbsize', 'command'], description: 'Operation to run.' },
         connection: { type: 'string', description: 'Connection id (a redis connection from db_browser list_connections).' },
         pattern: { type: 'string', description: 'Glob pattern for keys, default *.' },
-        limit: { type: 'number', description: 'Max keys returned, default 500.' },
+        limit: { type: 'number', description: 'Page size, at most 1000.' },
+        cursor: { type: 'string', description: 'Opaque nextCursor from a previous keys/get response.' },
         key: { type: 'string', description: 'Redis key for get/ttl.' },
         command: { type: 'string', description: 'Redis command name for action=command.' },
         args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' },
@@ -1541,9 +1569,86 @@ export function apply(ctx, config) {
   }, 'db-browser: close connections')
 }
 
+function scanKey(value) {
+  return Buffer.isBuffer(value) ? value.toString() : String(value)
+}
+
+function nodeIdentity(node, index) {
+  const host = node?.options?.host
+  const port = node?.options?.port
+  return host ? `${host}:${port ?? ''}` : `node:${index}`
+}
+
+function listedNodes(client, role) {
+  if (typeof client?.nodes !== 'function') return []
+  const list = client.nodes(role)
+  return Array.isArray(list) ? list.filter(Boolean) : []
+}
+
+function nodesToScan(client, mode) {
+  if (mode !== 'cluster') return [client]
+  const masters = listedNodes(client, 'master')
+  const all = listedNodes(client, 'all')
+  const primary = masters.length > 0 ? masters : all
+  return primary.length > 0 ? primary : [client]
+}
+
+function pageLimit(value) {
+  return Number.isFinite(Number(value)) && Number(value) > 0 ? Math.min(1000, Math.floor(Number(value))) : 1000
+}
+function encodeCursor(value) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
+function decodeCursor(value) {
+  if (!value) return {}
+  try {
+    const state = JSON.parse(Buffer.from(value, 'base64url').toString())
+    if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error()
+    return state
+  } catch { fail('bad-request', 'Invalid cursor') }
+}
+// COUNT is a hint: retain overflow rather than losing entries from compact encodings.
+async function scanPage(node, command, key, pattern, limit, state, width = 1) {
+  let cursor = String(state.scan ?? '0')
+  let done = state.done === true
+  const items = Array.isArray(state.pending) ? [...state.pending] : []
+  for (let round = 0; !done && items.length < limit && round < 40; round++) {
+    const args = [...(key === null ? [] : [key]), cursor, 'MATCH', pattern, 'COUNT', String(limit)]
+    const reply = await node.call(command, ...args)
+    cursor = String(reply[0])
+    if (!/^\d+$/.test(cursor)) fail('bad-response', 'Invalid Redis scan cursor')
+    const values = reply[1] ?? []
+    for (let i = 0; i < values.length; i += width) items.push(width === 1 ? scanKey(values[i]) : [scanKey(values[i]), scanKey(values[i + 1])])
+    done = cursor === '0'
+  }
+  const page = items.splice(0, limit)
+  return { items: page, nextCursor: !done || items.length ? encodeCursor({ scan: cursor, done, pending: items }) : null }
+}
+async function scanRedisKeys(client, { mode, pattern, limit, cursor }) {
+  const cap = pageLimit(limit)
+  const state = decodeCursor(cursor)
+  const primary = nodesToScan(client, mode)
+  const seen = new Set(primary.map(nodeIdentity))
+  const rest = mode === 'cluster' ? listedNodes(client, 'all').filter((node, i) => !seen.has(nodeIdentity(node, i))) : []
+  const nodes = [...primary, ...rest]
+  let index = state.index ?? 0
+  let inner = state.inner ?? null
+  const keys = []
+  while (index < nodes.length && keys.length < cap) {
+    const page = await scanPage(nodes[index], 'SCAN', null, pattern, cap - keys.length, decodeCursor(inner))
+    keys.push(...page.items)
+    inner = page.nextCursor
+    if (inner) break
+    index++
+    // Retain the existing replica fallback only when primary scans found nothing.
+    if (index === primary.length && (state.found || keys.length)) { index = nodes.length; break }
+  }
+  const nextCursor = index < nodes.length ? encodeCursor({ index, inner, found: state.found || keys.length > 0 }) : null
+  return { pattern, keys: [...new Set(keys)].sort(), nextCursor, truncated: nextCursor !== null }
+}
+
 export {
   DbCore,
   paginateSelect,
+  scanRedisKeys,
   DbBrowserError,
   dispatchPanelOp,
   normalizeConnection,

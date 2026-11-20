@@ -1,0 +1,47 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { DbCore, scanRedisKeys } from '../index.js'
+test('concurrent saves merge current configuration', async () => {
+ let current = { connections: [] }
+ const core = new DbCore({ fiber: { entry: {} }, get: () => ({ edit: async (_, update) => { current = update(current) } }) }, {})
+ await Promise.all(['a', 'b'].map(id => core.saveConnection({ id, type: 'redis', hosts: [{ host: 'localhost' }] })))
+ assert.deepEqual(current.connections.map(c => c.id).sort(), ['a', 'b'])
+})
+test('list preview is capped and continues', async () => {
+ const core = new DbCore({ get() {} }, {})
+ const values = Array.from({ length: 2100 }, (_, i) => String(i))
+ core.runOn = (_, fn) => fn({ client: () => ({ type: async () => 'list', ttl: async () => -1, pttl: async () => -1, llen: async () => values.length, lrange: async (_, a, b) => values.slice(a, b < 0 ? undefined : b + 1) }) })
+ const first = await core.redisGet({}, 'key', { limit: 9000 })
+ assert.equal(first.value.length, 1000)
+ const second = await core.redisGet({}, 'key', { cursor: first.nextCursor })
+ assert.equal(second.value[0], '1000')
+})
+test('scan overflow is available on next page', async () => {
+ const client = { call: async () => ['0', Array.from({ length: 1200 }, (_, i) => `k${i}`)] }
+ const first = await scanRedisKeys(client, { pattern: '*', limit: 1000 })
+ assert.equal(first.keys.length, 1000)
+ const second = await scanRedisKeys(client, { pattern: '*', limit: 1000, cursor: first.nextCursor })
+ assert.equal(second.keys.length, 200)
+ assert.equal(second.truncated, false)
+})
+test('sparse scan remains resumable after work budget is exhausted', async () => {
+ let calls = 0
+ const client = { call: async () => [String(++calls), []] }
+ const page = await scanRedisKeys(client, { pattern: 'rare*', limit: 1000 })
+ assert.equal(calls, 40)
+ assert.equal(page.truncated, true)
+ assert.ok(page.nextCursor)
+})
+test('hash scan preserves compact-encoding overflow', async () => {
+ const core = new DbCore({ get() {} }, {})
+ const flat = Array.from({ length: 1200 }, (_, i) => [`f${i}`, `v${i}`]).flat()
+ let scans = 0
+ core.runOn = (_, fn) => fn({ client: () => ({ type: async () => 'hash', ttl: async () => -1, pttl: async () => -1, hlen: async () => 1200, call: async () => { scans++; return ['0', flat] } }) })
+ const first = await core.redisGet({}, 'key')
+ const second = await core.redisGet({}, 'key', { cursor: first.nextCursor })
+ assert.equal(Object.keys(first.value).length, 1000)
+ assert.equal(Object.keys(second.value).length, 200)
+ assert.equal(second.value.f1199, 'v1199')
+ assert.equal(second.nextCursor, null)
+ assert.equal(scans, 1)
+})

@@ -1,5 +1,24 @@
+function hostsToText(hosts) {
+  return (hosts ?? []).map((x) => `${x.host}:${x.port}`).join(', ')
+}
+
+function textToHosts(text) {
+  return String(text ?? '')
+    .split(/[,;\r\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.lastIndexOf(':')
+      if (idx > 0 && /^\d+$/.test(part.slice(idx + 1))) {
+        return { host: part.slice(0, idx).trim(), port: Number(part.slice(idx + 1)) }
+      }
+      return { host: part }
+    })
+}
+
 window.__ModuleLoader__.load({
   id: '@local/db-browser',
+  hostList: { toText: hostsToText, fromText: textToHosts },
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -11,6 +30,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'panel': '数据库',
+      'loadMore': '加载更多',
       'header.subtitle': '连接、浏览并查询数据库',
       'newConnection': '新建连接',
       'refresh': '刷新',
@@ -40,11 +60,15 @@ window.__ModuleLoader__.load({
       'form.mode.sentinel': '哨兵 Sentinel',
       'form.mode.cluster': '集群 Cluster',
       'form.hosts': '主机列表',
-      'form.hostsHint': '每行一个 host:port；多个主机按顺序故障切换。哨兵模式填 Sentinel 地址',
+      'form.hostsHint': '多个 host:port 用英文逗号分隔，按顺序故障切换。哨兵模式填 Sentinel 地址',
       'form.user': '用户名',
       'form.password': '密码',
       'form.passwordKeep': '留空则保持已保存的密码',
       'form.passwordClear': '清除已保存的密码',
+      'form.poolMax': '连接池大小',
+      'form.poolMaxHint': '这个连接的池上限，1–50。面板和 Agent 共用。不填则用插件默认值。',
+      'form.allowWrites': '允许写入',
+      'form.allowWritesHint': '关闭时这个连接只读。不单独设置时跟随插件的 allowWrites。',
       'form.database': '默认数据库',
       'form.serviceName': '服务名 (serviceName)',
       'form.sid': 'SID (与 serviceName 二选一)',
@@ -85,7 +109,11 @@ window.__ModuleLoader__.load({
       'table.preview': '预览数据',
       'table.openInSql': '在 SQL 中查询',
       'table.ddl': 'DDL',
-      'redis.pattern': '键模式 (glob)',
+      'redis.pattern': '键模式，例如 prefix*',
+      'redis.scanHint': '输入 glob 模式后扫描，例如 prefix*。连接后不会扫描全部键。',
+      'redis.view.text': '文本',
+      'redis.view.json': 'JSON',
+      'redis.view.jsonInvalid': '不是合法 JSON，显示原始文本。',
       'redis.scan': '扫描',
       'redis.scanning': '扫描中…',
       'redis.keys': '键 ({n})',
@@ -136,6 +164,7 @@ window.__ModuleLoader__.load({
     }
     const en = {
       'panel': 'Database',
+      'loadMore': 'Load more',
       'header.subtitle': 'Connect, browse, and query databases',
       'newConnection': 'New connection',
       'refresh': 'Refresh',
@@ -165,11 +194,15 @@ window.__ModuleLoader__.load({
       'form.mode.sentinel': 'Sentinel',
       'form.mode.cluster': 'Cluster',
       'form.hosts': 'Hosts',
-      'form.hostsHint': 'One host:port per line; multiple hosts fail over in order. Sentinel mode: sentinel addresses',
+      'form.hostsHint': 'Comma-separated host:port entries. Multiple hosts fail over in order. Sentinel mode: sentinel addresses',
       'form.user': 'User',
       'form.password': 'Password',
       'form.passwordKeep': 'Leave empty to keep the saved password',
       'form.passwordClear': 'Remove the saved password',
+      'form.poolMax': 'Pool size',
+      'form.poolMaxHint': 'Pool limit for this connection, 1–50, shared by the panel and the agent. Leave empty to use the plugin default.',
+      'form.allowWrites': 'Allow writes',
+      'form.allowWritesHint': 'Off keeps this connection read-only. When unset, the connection follows the plugin allowWrites setting.',
       'form.database': 'Default database',
       'form.serviceName': 'Service name',
       'form.sid': 'SID (alternative to service name)',
@@ -210,7 +243,11 @@ window.__ModuleLoader__.load({
       'table.preview': 'Data preview',
       'table.openInSql': 'Query in SQL editor',
       'table.ddl': 'DDL',
-      'redis.pattern': 'Key pattern (glob)',
+      'redis.pattern': 'Key pattern, for example prefix*',
+      'redis.scanHint': 'Enter a glob pattern, then scan. Example: prefix*. Connecting does not scan every key.',
+      'redis.view.text': 'Text',
+      'redis.view.json': 'JSON',
+      'redis.view.jsonInvalid': 'Not valid JSON; showing raw text.',
       'redis.scan': 'Scan',
       'redis.scanning': 'Scanning…',
       'redis.keys': 'Keys ({n})',
@@ -288,24 +325,6 @@ window.__ModuleLoader__.load({
       return parseBody(res)
     }
 
-    function hostsToText(hosts) {
-      return (hosts ?? []).map((x) => `${x.host}:${x.port}`).join('\n')
-    }
-
-    function textToHosts(text) {
-      return String(text ?? '')
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          const idx = line.lastIndexOf(':')
-          if (idx > 0 && /^\d+$/.test(line.slice(idx + 1))) {
-            return { host: line.slice(0, idx), port: Number(line.slice(idx + 1)) }
-          }
-          return { host: line }
-        })
-    }
-
     function fmt(t, key, vars) {
       try { return t(key, vars) } catch { /* fall through */ }
       let s = t(key)
@@ -353,6 +372,12 @@ window.__ModuleLoader__.load({
     ]
     const TYPE_LABELS = Object.fromEntries(TYPE_OPTIONS)
     const FAMILY_PORT = { mysql: 3306, postgres: 5432, oracle: 1521 }
+    function hostsPlaceholder(type, mode) {
+      const port = type === 'redis'
+        ? (mode === 'sentinel' ? 26379 : 6379)
+        : (FAMILY_PORT[FAMILY[type]] ?? 3306)
+      return `10.0.0.1:${port}, 10.0.0.2:${port}`
+    }
 
     function TypeBadge({ type }) {
       return h('span', { className: `dbb-badge dbb-badge-${FAMILY[type] ?? type}` }, TYPE_LABELS[type] ?? type)
@@ -441,7 +466,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ConnectionForm({ initial, onClose, onSaved, onDelete, onSaveUncertain, t }) {
+    function ConnectionForm({ initial, defaults, onClose, onSaved, onDelete, onSaveUncertain, t }) {
       const isEdit = Boolean(initial?.id)
       // A prefilled object without id is a duplicate: id is fixed after save, and the panel never has the password.
       const isDuplicate = Boolean(initial) && !isEdit
@@ -479,7 +504,16 @@ window.__ModuleLoader__.load({
         if (dlg?.open) dlg.close()
         else onCloseRef.current()
       }, [])
-      const [draft, setDraft] = useState(() => initial ?? { type: 'mysql', mode: 'standalone' })
+      const pluginPool = Number.isInteger(defaults?.poolMax) ? defaults.poolMax : 4
+      const pluginWrites = defaults?.allowWrites === true
+      const [draft, setDraft] = useState(() => {
+        const base = initial ?? { type: 'mysql', mode: 'standalone' }
+        return {
+          ...base,
+          poolMax: Number.isInteger(base.poolMax) ? base.poolMax : pluginPool,
+          allowWrites: typeof base.allowWrites === 'boolean' ? base.allowWrites : pluginWrites,
+        }
+      })
       const [password, setPassword] = useState('')
       const [clearPassword, setClearPassword] = useState(false)
       const [busy, setBusy] = useState(null)
@@ -494,6 +528,8 @@ window.__ModuleLoader__.load({
           label: (draft.label ?? '').trim(),
           type: draft.type,
           hosts: textToHosts(draft.hostsText ?? hostsToText(draft.hosts)),
+          poolMax: draft.poolMax,
+          allowWrites: draft.allowWrites === true,
         }
         if (c.type === 'redis') {
           c.mode = draft.mode ?? 'standalone'
@@ -570,7 +606,7 @@ window.__ModuleLoader__.load({
             field('form.hosts', h('textarea', {
               className: 'dbb-input dbb-textarea', rows: 2,
               value: draft.hostsText ?? hostsToText(draft.hosts),
-              placeholder: draft.type === 'redis' && draft.mode === 'sentinel' ? '10.0.0.1:26379' : `10.0.0.1:${FAMILY_PORT[FAMILY[draft.type]] ?? 3306}`,
+              placeholder: hostsPlaceholder(draft.type, draft.mode),
               onChange: (e) => setDraft((d) => ({ ...d, hostsText: e.target.value })),
             }), 'form.hostsHint'),
             draft.type === 'redis' && draft.mode === 'sentinel' ? field('form.masterName', input(draft.masterName, set('masterName'), { placeholder: 'mymaster' })) : null,
@@ -581,6 +617,15 @@ window.__ModuleLoader__.load({
             draft.type === 'oracle' ? field('form.connectString', input(draft.connectString, set('connectString'), { placeholder: '(DESCRIPTION=…)' })) : null,
             draft.type === 'redis' ? field('form.dbIndex', input(draft.db ?? 0, (v) => setDraft((d) => ({ ...d, db: v })), { type: 'number', min: 0 })) : null,
             draft.type === 'redis' ? field('form.user', input(draft.username, set('username'), { placeholder: t('form.aclOptional') })) : null,
+            field('form.poolMax', input(draft.poolMax ?? '', (v) => setDraft((d) => ({ ...d, poolMax: v })), { type: 'number', min: 1, max: 50 }), 'form.poolMaxHint'),
+            h('label', { className: 'dbb-check' },
+              h('input', {
+                type: 'checkbox',
+                checked: draft.allowWrites === true,
+                onChange: (e) => setDraft((d) => ({ ...d, allowWrites: e.target.checked })),
+              }),
+              h('span', null, t('form.allowWrites'))),
+            h('span', { className: 'dbb-field-hint' }, t('form.allowWritesHint')),
             field('form.password',
               h('input', {
                 className: 'dbb-input', type: 'password', value: password, autoComplete: 'new-password',
@@ -883,6 +928,38 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function tryPrettyJson(text) {
+      const trimmed = String(text ?? '').trim()
+      if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
+      try {
+        return JSON.stringify(JSON.parse(trimmed), null, 2)
+      } catch {
+        return null
+      }
+    }
+
+    function StringValue({ text, t }) {
+      const raw = String(text ?? '')
+      const pretty = tryPrettyJson(raw)
+      const [tab, setTab] = useState(pretty !== null ? 'json' : 'text')
+      const tabs = [
+        ['text', t('redis.view.text')],
+        ['json', t('redis.view.json')],
+      ]
+      const body = tab === 'json' && pretty !== null ? pretty : raw
+      return h('div', null,
+        h('div', { className: 'dbb-subtabs dbb-value-tabs', role: 'tablist', 'aria-label': t('redis.kv.value') },
+          tabs.map(([id, label]) => h('button', {
+            key: id, type: 'button', role: 'tab',
+            className: 'dbb-subtab',
+            'aria-selected': tab === id ? 'true' : 'false',
+            onClick: () => setTab(id),
+          }, label))),
+        tab === 'json' && pretty === null ? h('div', { className: 'dbb-field-hint' }, t('redis.view.jsonInvalid')) : null,
+        h('pre', { className: 'dbb-pre' }, body),
+      )
+    }
+
     function RedisValue({ info, t }) {
       if (!info) return null
       if (info.exists === false) return h('div', { className: 'dbb-muted' }, t('redis.keyNotFound'))
@@ -893,7 +970,7 @@ window.__ModuleLoader__.load({
       )
       let body
       if (info.type === 'string') {
-        body = h('pre', { className: 'dbb-pre' }, String(info.value ?? ''))
+        body = h(StringValue, { text: info.value ?? '', t })
       } else if (info.type === 'hash') {
         const entries = Object.entries(info.value ?? {})
         body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
@@ -932,55 +1009,76 @@ window.__ModuleLoader__.load({
     }
 
     function RedisView({ conn, t }) {
-      const [pattern, setPattern] = useState('*')
+      const [pattern, setPattern] = useState('')
       const patternRef = useRef(pattern)
       patternRef.current = pattern
       const [keys, setKeys] = useState(null)
       const [truncated, setTruncated] = useState(false)
+      const [keyCursor, setKeyCursor] = useState(null)
+      const [valueBusy, setValueBusy] = useState(false)
+      const scanSeq = useRef(0)
+      const activePattern = useRef('')
       const [scanning, setScanning] = useState(false)
       const [error, setError] = useState(null)
       const [selected, setSelected] = useState(null)
       const [value, setValue] = useState(null)
       const [valueError, setValueError] = useState(null)
-      const scan = useCallback(async () => {
+      const started = conn.status === 'open'
+      const scan = useCallback(async (more = false) => {
+        more = more === true
+        const request = ++scanSeq.current
+        const match = more ? activePattern.current : patternRef.current.trim()
+        if (conn.status !== 'open' || match === '') return
         setScanning(true); setError(null)
         try {
-          const r = await call('redis-keys', { id: conn.id, pattern: patternRef.current, limit: 1000 })
-          setKeys(r.keys); setTruncated(r.truncated)
+          const r = await call('redis-keys', { id: conn.id, pattern: match, limit: 1000, cursor: more ? keyCursor : undefined })
+          if (request !== scanSeq.current) return
+          activePattern.current = match
+          setKeys(old => more ? [...new Set([...(old ?? []), ...r.keys])] : r.keys); setTruncated(r.truncated); setKeyCursor(r.nextCursor)
         } catch (e) { setError(e) } finally { setScanning(false) }
-      }, [conn.id])
-      // scan's identity changes with the connection, not with the pattern field.
-      useEffect(() => { setKeys(null); setSelected(null); setValue(null); scan() }, [scan])
+      }, [conn.id, conn.status, keyCursor])
 
       const [dbsize, setDbsize] = useState(null)
       const reqSeq = useRef(0)
       useEffect(() => {
+        if (conn.status !== 'open') { setDbsize(null); return }
         let alive = true
         call('redis-dbsize', { id: conn.id }).then((r) => { if (alive) setDbsize(r.dbsize) }).catch(() => {})
         return () => { alive = false }
-      }, [conn.id, keys])
-      const openKey = useCallback(async (key) => {
+      }, [conn.id, conn.status])
+      const openKey = useCallback(async (key, more = false) => {
         const req = ++reqSeq.current
-        setSelected(key); setValue(null); setValueError(null)
+        setSelected(key); if (!more) setValue(null); setValueError(null); setValueBusy(true)
         try {
-          const v = await call('redis-get', { id: conn.id, key })
-          if (req === reqSeq.current) setValue(v)
-        } catch (e) { if (req === reqSeq.current) setValueError(e) }
-      }, [conn.id])
+          const v = await call('redis-get', { id: conn.id, key, limit: 1000, cursor: more ? value?.nextCursor : undefined })
+          if (req === reqSeq.current) setValue(old => {
+            if (!more || !old || old.type !== v.type) return v
+            if (v.type === 'string' && old.valueBase64 !== undefined && v.valueBase64 !== undefined) {
+              const raw = atob(old.valueBase64) + atob(v.valueBase64)
+              return { ...v, valueBase64: btoa(raw), value: new TextDecoder().decode(Uint8Array.from(raw, c => c.charCodeAt(0))) }
+            }
+            const merged = v.type === 'hash' ? { ...old.value, ...v.value } : v.type === 'string' ? old.value + v.value : v.type === 'set' ? [...new Set([...old.value, ...v.value])] : [...old.value, ...v.value]
+            return { ...v, value: merged }
+          })
+        } catch (e) { if (req === reqSeq.current) setValueError(e) } finally { if (req === reqSeq.current) setValueBusy(false) }
+      }, [conn.id, value])
       return h('div', { className: 'dbb-redis' },
         h('div', { className: 'dbb-sql-bar' },
           h('input', { className: 'dbb-input dbb-pattern', value: pattern, onChange: (e) => setPattern(e.target.value), placeholder: t('redis.pattern'), onKeyDown: (e) => { if (e.key === 'Enter') scan() } }),
-          h('button', { className: 'dbb-btn dbb-btn-primary', onClick: scan, disabled: scanning }, scanning ? t('redis.scanning') : t('redis.scan')),
+          h('button', { className: 'dbb-btn dbb-btn-primary', onClick: scan, disabled: scanning || !started || pattern.trim() === '' }, scanning ? t('redis.scanning') : t('redis.scan')),
           dbsize !== null ? h('span', { className: 'dbb-muted' }, t('redis.dbsize') + ': ' + dbsize) : null,
         ),
         h(ErrorBar, { error: error?.message, onClose: () => setError(null), t }),
         h('div', { className: 'dbb-redis-body' },
           h('div', { className: 'dbb-redis-keys' },
-            keys === null
-              ? h('div', { className: 'dbb-muted dbb-pad' }, t('redis.pattern') + ' · ' + t('redis.scan'))
+            !started
+              ? h('div', { className: 'dbb-muted dbb-pad' }, t('conn.needStart'))
+              : keys === null
+              ? h('div', { className: 'dbb-muted dbb-pad' }, t('redis.scanHint'))
               : [
                   h('div', { key: 'm', className: 'dbb-result-meta dbb-pad' }, fmt(t, 'redis.keys', { n: keys.length }) + (truncated ? ` (${t('result.truncated')})` : '')),
                   h(VirtualKeyList, { key: 'vl', keys, selected, openKey }),
+                  keyCursor ? h('button', { key: 'more', className: 'dbb-btn', disabled: scanning || !started, onClick: () => scan(true) }, t('loadMore')) : null,
                 ],
           ),
           h('div', { className: 'dbb-redis-value' },
@@ -990,6 +1088,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'dbb-tableview-name' }, selected),
                   h(ErrorBar, { error: valueError?.message, onClose: () => setValueError(null), t }),
                   value ? h(RedisValue, { info: value, t }) : h('div', { className: 'dbb-muted' }, t('tree.loading')),
+                  value?.nextCursor ? h('button', { className: 'dbb-btn', disabled: valueBusy || !started, onClick: () => openKey(selected, true) }, t('loadMore')) : null,
                 ),
           ),
         ),
@@ -1136,6 +1235,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
 .dbb-pre{margin:8px 0;padding:8px;background:var(--dsw-alias-bg-layer-1);border-radius:6px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .dbb-welcome{padding:40px 24px;color:var(--dsw-alias-label-secondary)}
 .dbb-pane-col{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
+.dbb-value-tabs{padding:0;margin:8px 0 0}
 .dbb-subtabs{display:flex;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .dbb-subtab{border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);padding:6px 10px 5px;cursor:pointer;font-size:12px}
 .dbb-subtab[aria-selected="true"]{color:var(--dsw-alias-label-primary);border-bottom-color:var(--dsw-alias-brand-primary)}
@@ -1271,7 +1371,11 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
             await call('connect', { id: conn.id })
           }
           await refresh()
-          if (conn.status !== 'open') loadDatabases(conn)
+          if (conn.status !== 'open') {
+            // The click still sees the pre-start status. SQL expands its schema list; Redis has no schemas.
+            if (conn.type === 'redis') patchTree(key, { error: null, loading: false })
+            else loadDatabases(conn)
+          }
         } catch (e) {
           patchTree(key, { loading: false, error: e.message })
           await refresh()
@@ -1414,7 +1518,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
         if (view.kind === 'routines' && conn.features?.procedures) {
           return h('div', { className: 'dbb-pane-col' },
             strip,
-            h(RoutinesView, { key: `${conn.id}/routines`, conn, allowWrites: data?.allowWrites === true, t }),
+            h(RoutinesView, { key: `${conn.id}/routines`, conn, allowWrites: typeof conn.allowWrites === 'boolean' ? conn.allowWrites : data?.allowWrites === true, t }),
           )
         }
         return h('div', { className: 'dbb-pane-col' },
@@ -1422,7 +1526,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
           h(SqlPane, {
             key: conn.id, conn, seed: view.seed ?? null,
             clearSeed: () => focusTab(conn.id, { kind: 'sql' }),
-            allowWrites: data?.allowWrites === true, t,
+            allowWrites: typeof conn.allowWrites === 'boolean' ? conn.allowWrites : data?.allowWrites === true, t,
           }),
         )
       }
@@ -1494,6 +1598,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
           ? h(ConnectionForm, {
               // {} is a blank form. An object without id is a duplicate.
               initial: editing && Object.keys(editing).length > 0 ? editing : null,
+              defaults: { allowWrites: data?.allowWrites === true, poolMax: data?.poolMax ?? 4 },
               t,
               onClose: () => setEditing(null),
               onDelete: async (conn) => { setEditing(null); await removeConn(conn) },

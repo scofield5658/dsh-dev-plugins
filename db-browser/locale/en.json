@@ -33,7 +33,7 @@
     "form.dbIndex": "DB index",
     "form.delete": "Delete connection",
     "form.hosts": "Hosts",
-    "form.hostsHint": "One host:port per line; multiple hosts fail over in order. Sentinel mode: sentinel addresses",
+    "form.hostsHint": "Comma-separated host:port entries. Multiple hosts fail over in order. Sentinel mode: sentinel addresses",
     "form.id": "Identifier (id)",
     "form.idHint": "Letters, digits, _ . -; fixed after saving; the agent references connections by it",
     "form.label": "Name",
@@ -44,6 +44,10 @@
     "form.mode.standalone": "Standalone",
     "form.password": "Password",
     "form.passwordClear": "Remove the saved password",
+    "form.poolMax": "Pool size",
+    "form.poolMaxHint": "Pool limit for this connection, 1–50, shared by the panel and the agent. Leave empty to use the plugin default.",
+    "form.allowWrites": "Allow writes",
+    "form.allowWritesHint": "Off keeps this connection read-only. When unset, the connection follows the plugin allowWrites setting.",
     "form.passwordKeep": "Leave empty to keep the saved password",
     "form.serviceName": "Service name",
     "form.sid": "SID (alternative to service name)",
@@ -71,7 +75,11 @@
     "redis.kv.value": "value",
     "redis.length": "Length {n}",
     "redis.noTtl": "No expiry",
-    "redis.pattern": "Key pattern (glob)",
+    "redis.pattern": "Key pattern, for example prefix*",
+    "redis.scanHint": "Enter a glob pattern, then scan. Example: prefix*. Connecting does not scan every key.",
+    "redis.view.text": "Text",
+    "redis.view.json": "JSON",
+    "redis.view.jsonInvalid": "Not valid JSON; showing raw text.",
     "redis.scan": "Scan",
     "redis.scanning": "Scanning…",
     "redis.selectKey": "Click a key on the left to view its value",
@@ -126,6 +134,7 @@
     "tree.more": "{total} tables, showing first {shown}",
     "tree.retry": "Retry",
     "welcome.body": "Pick a connection on the left, or create one. The agent can query the same connections through the db_browser / redis_browser tools.",
-    "welcome.title": "Database browser"
+    "welcome.title": "Database browser",
+    "loadMore": "Load more"
   }
 }

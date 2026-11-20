@@ -160,15 +160,21 @@ export function apply(ctx, config = {}) {
   }
   const log = typeof ctx.logger === 'function' ? ctx.logger('kafka-explorer') : console
   /** @type {Map<string, {id: string, params: object, kafka: Kafka, admin: any, adminReady: Promise<void>|null, lastUsed: number, subscriptions: Set<string>}>} */
+  let closed = false
   const connections = new Map()
   /** @type {Map<string, object>} */
   const subscriptions = new Map()
+
+  function assertActive(conn) {
+    if (closed || conn?.closing) throw new HttpError(503, 'Plugin or connection is closing')
+  }
 
   function touchConn(conn) {
     conn.lastUsed = Date.now()
   }
 
   async function ensureAdmin(conn) {
+    assertActive(conn)
     touchConn(conn)
     if (conn.adminReady === null) {
       conn.adminReady = conn.admin.connect()
@@ -201,6 +207,7 @@ export function apply(ctx, config = {}) {
   }
 
   async function dropConnection(conn) {
+    conn.closing = true
     for (const id of [...conn.subscriptions]) {
       const sub = subscriptions.get(id)
       if (sub !== undefined) await stopSubscription(sub)
@@ -302,6 +309,7 @@ export function apply(ctx, config = {}) {
   }
 
   async function createConnection(body) {
+    assertActive()
     const params = {
       brokers: asBrokers(body.brokers),
       ssl: body.ssl === true || (body.ssl && typeof body.ssl === 'object') ? (body.ssl === true ? true : body.ssl) : false,
@@ -326,10 +334,12 @@ export function apply(ctx, config = {}) {
       logLevel: logLevel.NOTHING,
     })
     const admin = kafka.admin()
-    await admin.connect()
     let cluster
     try {
+      await admin.connect()
+      assertActive()
       cluster = await admin.describeCluster()
+      assertActive()
     } catch (err) {
       await admin.disconnect().catch(() => {})
       throw err
@@ -477,6 +487,7 @@ export function apply(ctx, config = {}) {
           }
         }
       })
+      assertActive(conn)
       // fromBeginning only applies to partitions the seek plan does not cover.
       await consumer.subscribe({ topics, fromBeginning: start.mode === 'earliest' })
       await consumer.run({
@@ -486,6 +497,7 @@ export function apply(ctx, config = {}) {
           if (sub.buffer.length > BUFFER_CAP) sub.buffer.splice(0, sub.buffer.length - BUFFER_CAP)
         },
       })
+      assertActive(conn)
     } catch (err) {
       // A failed subscribe must not leave a connected consumer for the idle sweep.
       try { await consumer.stop() } catch { /* not running */ }
@@ -522,8 +534,9 @@ export function apply(ctx, config = {}) {
       sessionTimeout: 15000,
     })
     const collected = []
-    await consumer.connect()
     try {
+      await consumer.connect()
+      assertActive(conn)
       await consumer.subscribe({ topic, fromBeginning: true })
       let finish
       const done = new Promise(resolve => { finish = resolve })
@@ -815,6 +828,7 @@ export function apply(ctx, config = {}) {
     let stopped = false
     const timer = setInterval(() => { if (!stopped) sweep() }, SWEEP_INTERVAL_MS)
     return async () => {
+      closed = true
       stopped = true
       clearInterval(timer)
       for (const sub of [...subscriptions.values()]) {

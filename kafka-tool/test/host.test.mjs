@@ -265,3 +265,23 @@ test('plugin stays active without the tools service', () => {
   const { handler } = mount()
   assert.equal(typeof handler, 'function')
 })
+
+test('connection finishing after unload is disconnected and not retained', async (t) => {
+  const { Kafka } = await import('kafkajs')
+  let release
+  const waiting = new Promise(resolve => { release = resolve })
+  let disconnected = 0
+  t.mock.method(Kafka.prototype, 'admin', () => ({
+    connect: () => waiting,
+    describeCluster: async () => ({ brokers: [] }),
+    disconnect: async () => { disconnected++ },
+  }))
+  const { handler, effects } = mount()
+  const pending = call(handler, 'POST', '/connections', { brokers: ['localhost:9092'] })
+  await new Promise(resolve => setImmediate(resolve))
+  await effects.find(fn => typeof fn === 'function')()
+  release()
+  const result = await pending
+  assert.equal(result.status, 503)
+  assert.equal(disconnected, 1)
+})

@@ -116,9 +116,43 @@ test('DbCore: an invalid connection fails construction', () => {
   )
 })
 
+test('a connection can override pool size and write permission', async () => {
+  const core = new DbCore(stubCtx(), {
+    allowWrites: false,
+    poolMax: 4,
+    connections: [
+      { id: 'm', type: 'mysql', user: 'u', hosts: [{ host: 'h' }], poolMax: '8', allowWrites: true },
+      { id: 'r', type: 'redis', hosts: [{ host: 'h' }] },
+    ],
+  })
+  assert.equal(core.get('m').poolMax, 8)
+  assert.equal(core.poolLimit(core.get('m')), 8)
+  assert.equal(core.writesAllowed(core.get('m')), true)
+  assert.equal(core.get('r').poolMax, undefined)
+  assert.equal(core.poolLimit(core.get('r')), 4)
+  assert.equal(core.writesAllowed(core.get('r')), false)
+  assert.equal(core.list().find((c) => c.id === 'm').allowWrites, true)
+  await assert.rejects(
+    () => core.sqlAction('m', 'query', { sql: 'DELETE FROM t' }),
+    (e) => e.code === 'not-connected',
+  )
+  await assert.rejects(
+    () => core.sqlAction('r', 'query', { sql: 'DELETE FROM t' }),
+    (e) => e.code === 'bad-request',
+  )
+  const inherited = new DbCore(stubCtx(), {
+    allowWrites: false,
+    connections: [{ id: 'm', type: 'mysql', user: 'u', hosts: [{ host: 'h' }] }],
+  })
+  await assert.rejects(
+    () => inherited.sqlAction('m', 'query', { sql: 'DELETE FROM t' }),
+    (e) => e.code === 'readonly',
+  )
+})
+
 test('DbCore: caps are clamped', () => {
   const core = new DbCore(stubCtx(), { maxRows: 999999, queryTimeoutMs: -5 })
-  assert.equal(core.maxRows, 10000)
+  assert.equal(core.maxRows, 1000)
   assert.equal(core.queryTimeoutMs, 30000)
 })
 
