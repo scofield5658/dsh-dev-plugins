@@ -1,4 +1,26 @@
 const ROUTE_PREFIX = '/db-browser'
+
+/** Root for user-owned data. DSH sets DSH_HOME on every platform. */
+export function dshHome() {
+  const configured = process.env.DSH_HOME
+  if (typeof configured === 'string' && configured.trim()) {
+    const value = configured.trim()
+    return path.isAbsolute(value) ? path.resolve(value) : path.resolve(homedir(), value)
+  }
+  return path.join(homedir(), '.dsh')
+}
+
+const PLUGIN_ID = 'db-browser'
+
+/** Per-plugin data directory: $DSH_HOME/plugins/<loader-id>. */
+export function pluginDataDir() {
+  return path.join(dshHome(), 'plugins', PLUGIN_ID)
+}
+
+export function connectionsPath() {
+  return path.join(pluginDataDir(), 'connections.json')
+}
+
 const CREDENTIAL_SCOPE = 'db-browser'
 // Credential key segments must match `^[a-z][a-z0-9-]*$`. Hex keeps `_`, `.`, and capitals legal.
 function credentialRecordKey(id) {
@@ -82,34 +104,13 @@ const REDIS_READONLY = new Set([
   'XLEN', 'XRANGE', 'XREVRANGE', 'XINFO', 'OBJECT', 'COMMAND', 'LOLWUT',
 ])
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { promises as fsp } from 'node:fs'
 import { homedir } from 'node:os'
+import path from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 
 export const name = 'db-browser'
-
-const HostConfig = Schema.object({
-  host: Schema.string().required(),
-  port: Schema.number().min(1).max(65535),
-})
-
-const ConnectionConfig = Schema.object({
-  id: Schema.string().required(),
-  type: Schema.union([...ALL_TYPES]).required(),
-  label: Schema.string(),
-  hosts: Schema.array(HostConfig).default([]),
-  user: Schema.string(),
-  database: Schema.string(),
-  serviceName: Schema.string(),
-  sid: Schema.string(),
-  connectString: Schema.string(),
-  mode: Schema.union(['standalone', 'sentinel', 'cluster']),
-  masterName: Schema.string(),
-  db: Schema.number().min(0),
-  username: Schema.string(),
-  poolMax: Schema.number().min(1).max(50),
-  allowWrites: Schema.boolean(),
-})
 
 const FeatureOverride = Schema.object({
   showCreate: Schema.boolean(),
@@ -132,7 +133,6 @@ export const Config = Schema.object({
     'tdsql-pg': FeatureOverride,
     oracle: FeatureOverride,
   }).default({}),
-  connections: Schema.array(ConnectionConfig).default([]),
 })
 
 class DbBrowserError extends Error {
@@ -305,7 +305,7 @@ function groupIndexes(rows) {
 }
 
 class DbCore {
-  constructor(ctx, config) {
+  constructor(ctx, config, options = {}) {
     this.ctx = ctx
     this.closed = false
     this.oracleClientLib = typeof config?.oracleClientLib === 'string' && config.oracleClientLib !== '' ? config.oracleClientLib : undefined
@@ -317,10 +317,38 @@ class DbCore {
     this.connections = new Map()
     this.sessions = new Map()
     this.starting = new Map()
-    for (const raw of Array.isArray(config?.connections) ? config.connections : []) {
+    this.connectionsFile = typeof options?.connectionsFile === 'string' && options.connectionsFile !== '' ? options.connectionsFile : null
+    this.writeChain = Promise.resolve()
+    let rows = Array.isArray(config?.connections) ? config.connections : []
+    if (this.connectionsFile && existsSync(this.connectionsFile)) {
+      let parsed
+      try {
+        parsed = JSON.parse(readFileSync(this.connectionsFile, 'utf8'))
+      } catch {
+        fail('bad-config', 'connections file is not valid JSON')
+      }
+      const fromFile = Array.isArray(parsed) ? parsed : parsed?.connections
+      if (!Array.isArray(fromFile)) fail('bad-config', 'connections file must contain a connections array')
+      rows = fromFile
+    }
+    for (const raw of rows) {
       const c = normalizeConnection(raw)
       this.connections.set(c.id, c)
     }
+  }
+
+  enqueueWrite(fn) {
+    const run = this.writeChain.then(fn, fn)
+    this.writeChain = run.catch(() => {})
+    return run
+  }
+
+  async persistConnections(list) {
+    if (!this.connectionsFile) fail('no-config-file', 'The connection store is unavailable in this profile')
+    await fsp.mkdir(path.dirname(this.connectionsFile), { recursive: true, mode: 0o700 })
+    const tmp = `${this.connectionsFile}.tmp`
+    await fsp.writeFile(tmp, `${JSON.stringify({ connections: list }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+    await fsp.rename(tmp, this.connectionsFile)
   }
 
   poolLimit(c) {
@@ -374,20 +402,21 @@ class DbCore {
 
   async saveConnection(raw) {
     const next = normalizeConnection(raw)
-    const entry = this.ctx.fiber?.entry
-    const editor = this.ctx.get('configEditor')
-    if (!entry || !editor) fail('no-config-editor', 'Configuration cannot be saved in this profile; edit the plugin config in cordis.patch.yml instead')
-    await editor.edit(entry, (current) => ({ ...current, connections: (current.connections ?? []).filter(c => c.id !== next.id).concat(next) }))
+    await this.enqueueWrite(async () => {
+      const list = [...this.connections.values()].filter((c) => c.id !== next.id).concat(next)
+      await this.persistConnections(list)
+      this.connections.set(next.id, next)
+    })
     return { saved: next.id }
   }
 
   async deleteConnection(id) {
-    const entry = this.ctx.fiber?.entry
-    const editor = this.ctx.get('configEditor')
-    if (!entry || !editor) fail('no-config-editor', 'Configuration cannot be saved in this profile')
-    this.get(id)
-    await editor.edit(entry, (current) => ({ ...current, connections: (current.connections ?? []).filter(c => c.id !== id) }))
-    return { deleted: id }
+    const current = this.get(id)
+    await this.enqueueWrite(async () => {
+      await this.persistConnections([...this.connections.values()].filter((c) => c.id !== id))
+      this.connections.delete(id)
+    })
+    return { deleted: current.id }
   }
 
   statusOf(id) {
@@ -1366,7 +1395,7 @@ function registerHttp(ctx, core) {
 async function dispatchPanelOp(core, op, p) {
   switch (op) {
     case 'save-connection': {
-      // Config save restarts the plugin, so the password must already be stored under the new id.
+      // Store the password before the connection row so a failed save never leaves a bare credential.
       if (typeof p.password === 'string' && p.password !== '') {
         const next = normalizeConnection(p.connection)
         await core.savePassword(next.id, p.password)
@@ -1555,7 +1584,7 @@ function registerTools(ctx, core) {
 
 export function apply(ctx, config) {
   const resolved = Config(config ?? {})
-  const core = new DbCore(ctx, resolved)
+  const core = new DbCore(ctx, resolved, { connectionsFile: connectionsPath() })
   // Cold boot has no start order. ctx.get here can miss webServer/tools and leave routes unregistered.
   ctx.inject(['webServer', 'connection'], (injected) => registerHttp(injected, core))
   ctx.inject(['tools'], (injected) => registerTools(injected, core))

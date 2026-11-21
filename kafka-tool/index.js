@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { promises as fsp } from 'node:fs'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { Kafka, logLevel } from 'kafkajs'
 import Schema from '@deepseek-ai/schemastery'
 
@@ -25,6 +28,70 @@ export function configuredSasl(value) {
 }
 
 const PREFIX = '/api/kafka-tool/'
+
+/** Root for user-owned data. DSH sets DSH_HOME on every platform. */
+export function dshHome() {
+  const configured = process.env.DSH_HOME
+  if (typeof configured === 'string' && configured.trim()) {
+    const value = configured.trim()
+    return path.isAbsolute(value) ? path.resolve(value) : path.resolve(homedir(), value)
+  }
+  return path.join(homedir(), '.dsh')
+}
+
+const PLUGIN_ID = 'kafka-tool'
+
+/** Per-plugin data directory: $DSH_HOME/plugins/<loader-id>. */
+export function pluginDataDir() {
+  return path.join(dshHome(), 'plugins', PLUGIN_ID)
+}
+
+export function storedConfigPath() {
+  return path.join(pluginDataDir(), 'config.json')
+}
+
+function normalizeStoredConfig(input) {
+  const connection = input && typeof input === 'object' ? input.connection : null
+  const brokers = Array.isArray(connection?.brokers)
+    ? connection.brokers.filter(one => typeof one === 'string' && one.trim() !== '').map(one => one.trim())
+    : []
+  const sasl = configuredSasl(connection?.sasl)
+  const interval = Number(input?.refresh?.intervalSec)
+  return {
+    connection: {
+      brokers,
+      ssl: connection?.ssl === true,
+      sasl,
+    },
+    refresh: {
+      enabled: input?.refresh?.enabled !== false,
+      intervalSec: Number.isFinite(interval) ? Math.min(3600, Math.max(1, Math.floor(interval))) : 10,
+    },
+  }
+}
+
+async function readStoredConfig(file) {
+  let raw
+  try {
+    raw = await fsp.readFile(file, 'utf8')
+  } catch (err) {
+    if (err?.code === 'ENOENT') return null
+    throw err
+  }
+  try {
+    return normalizeStoredConfig(JSON.parse(raw))
+  } catch {
+    throw new HttpError(500, 'config file is not valid JSON')
+  }
+}
+
+async function writeStoredConfig(file, config) {
+  await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+  const tmp = `${file}.tmp`
+  await fsp.writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await fsp.rename(tmp, file)
+}
+
 const MAX_BODY_BYTES = 1024 * 1024
 const VALUE_CAP_BYTES = 256 * 1024
 const KEY_CAP_BYTES = 8 * 1024
@@ -604,6 +671,21 @@ export function apply(ctx, config = {}) {
     const segments = rest.split('/').filter(one => one !== '')
     const head = segments[0]
 
+    if (head === 'config' && segments.length === 1 && req.method === 'GET') {
+      const file = storedConfigPath()
+      const stored = await readStoredConfig(file)
+      const config = stored ?? {
+        connection: { brokers: defaults.brokers, ssl: defaults.ssl, sasl: defaults.sasl },
+        refresh: { enabled: true, intervalSec: 10 },
+      }
+      return sendJson(res, 200, { config, path: file })
+    }
+    if (head === 'config' && segments.length === 1 && req.method === 'PUT') {
+      const config = normalizeStoredConfig(await readBody(req))
+      const file = storedConfigPath()
+      await writeStoredConfig(file, config)
+      return sendJson(res, 200, { ok: true, config, path: file })
+    }
     if (req.method === 'GET' && head === 'defaults' && segments.length === 1) {
       return sendJson(res, 200, defaults)
     }

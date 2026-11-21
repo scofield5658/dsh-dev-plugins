@@ -1,3 +1,8 @@
 node_modules/
 *.log
 .DS_Store
+
+# User configuration and secrets stay outside the plugin package (see ../../AGENTS.md).
+*.local.json
+.env
+.env.*

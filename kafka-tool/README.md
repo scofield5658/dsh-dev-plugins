@@ -13,16 +13,34 @@ Kafka Tool 风格的侧边栏数据查询面板。
 
 ## 连接配置
 
-面板表单记住 broker 地址等（不记密码）。也可以在插件配置中提供默认值：
+面板表单的 broker、SSL、SASL 用户名与刷新间隔保存到插件自己的配置目录：
+
+```
+$DSH_HOME/plugins/kafka-tool/config.json
+默认 ~/.dsh/plugins/kafka-tool/config.json
+```
+
+密码只在页面内存，不写入文件。文件结构：
+
+```json
+{
+  "connection": {
+    "brokers": ["10.0.0.1:9092"],
+    "ssl": false,
+    "sasl": { "mechanism": "plain", "username": "my-user" }
+  },
+  "refresh": { "enabled": true, "intervalSec": 10 }
+}
+```
+
+插件 Config 的 `brokers` / `ssl` / `sasl` 只作为首次启动的部署默认值，运行时以文件为准：
 
 ```yaml
 config:
-  brokers: ['10.0.0.1:9092', '10.0.0.2:9092']
+  brokers: ['10.0.0.1:9092']
   ssl: false
   # sasl: { mechanism: plain, username: my-user }   # plain | scram-sha-256 | scram-sha-512
 ```
-
-密码只在面板中输入，保存在页面内存中，不会写入配置文件或 localStorage。
 
 ## 在其他终端安装
 
@@ -53,4 +71,4 @@ pnpm test
 
 ## 开发约定：冷启动陷阱
 
-Host 侧服务**禁止在 `apply()` 里一次性 `ctx.get()` 后就用**——冷启动时未声明依赖的行之间没有启动顺序保证，服务可能还没发布，静默跳过会导致注册永远不发生（db-browser 插件曾因此面板 HTTP 404）。一律用 `ctx.inject(['tools'], ...)` 延迟到服务发布后注册（本插件的工具注册即如此；面板数据走 `connection/request` 事件，天然无时序问题）。改动 Host 端注册路径后，必须做一次完整 DSH 重启冒烟。
+Host 侧服务**禁止在 `apply()` 里一次性 `ctx.get()` 后就用**——冷启动时未声明依赖的行之间没有启动顺序保证，服务可能还没发布，静默跳过会导致注册永远不发生（曾因此出现面板 HTTP 404）。一律用 `ctx.inject(['tools'], ...)` 延迟到服务发布后注册（本插件的工具注册即如此；面板数据走 `connection/request` 事件，天然无时序问题）。改动 Host 端注册路径后，必须做一次完整 DSH 重启冒烟。

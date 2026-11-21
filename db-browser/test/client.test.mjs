@@ -169,8 +169,8 @@ test('starting Redis does not query it as SQL, and a stopped Redis view does not
   const calls = []
   let status = 'stopped'
   const redis = {
-    id: 'goats-redis',
-    label: 'goats-redis',
+    id: 'cache-redis',
+    label: 'cache-redis',
     type: 'redis',
     mode: 'standalone',
     hosts: [{ host: '10.0.0.1', port: 6379 }],
@@ -190,7 +190,7 @@ test('starting Redis does not query it as SQL, and a stopped Redis view does not
       if (path.endsWith('/redis-keys')) return ok({ keys: ['a'], truncated: false })
       if (path.endsWith('/redis-dbsize')) return ok({ dbsize: 1 })
       if (path.endsWith('/list-databases')) {
-        return { ok: true, status: 400, json: async () => ({ ok: false, error: { message: 'Connection goats-redis is redis, not a SQL database' } }) }
+        return { ok: true, status: 400, json: async () => ({ ok: false, error: { message: 'Connection cache-redis is redis, not a SQL database' } }) }
       }
       return ok({})
     },
@@ -224,7 +224,7 @@ test('starting Redis does not query it as SQL, and a stopped Redis view does not
   const opened = render()
   const row = [...walkElements(opened.tree)].find((el) => {
     const [type, props] = el.__element
-    return typeof type === 'function' && props?.label === 'goats-redis'
+    return typeof type === 'function' && props?.label === 'cache-redis'
   })
   assert.ok(row, 'redis connection row rendered')
   row.__element[1].onClick()

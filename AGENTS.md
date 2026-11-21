@@ -10,6 +10,7 @@
 | --- | --- |
 | `db-browser/` | `@local/db-browser` |
 | `kafka-tool/` | `@local/kafka-tool` |
+| `squad-dashboard/` | `@local/squad-dashboard` |
 
 ## 目录边界
 
@@ -20,12 +21,24 @@
 每个插件目录自行维护：
 
 - `package.json` 与 `pnpm-lock.yaml`
-- `.gitignore`（至少忽略 `node_modules/`、`*.log`、`.DS_Store`）
+- `.gitignore`（至少忽略 `node_modules/`、`*.log`、`.DS_Store`、`*.local.json`、`.env`、`.env.*`）
 - `README.md`
 - `cordis.patch.yml`、`index.js`、`client.js`
 - `locale/`、`icon.svg`、`test/`
 
 安装依赖、运行测试和修改锁文件，都在该插件目录内执行。改一个插件时不要顺手改另一个插件的清单或依赖。
+
+## 用户配置与本地数据
+
+插件目录只放代码、默认配置、文档、测试和图标；用户配置、连接、Token、名册、日志、缓存一律放外部，不得写进插件目录或仓库。
+
+数据根目录统一用宿主提供的 `DSH_HOME`（默认 `~/.dsh`，Windows/macOS/Linux 一致）：
+
+- 优先用宿主机制：设置走插件 `Config`，密码/Token 走 `ctx.credentials`，持久数据走 `ctx.storageDomain`；
+- 确需自己落盘时放 `DSH_HOME/plugins/<plugin-id>/`（`<plugin-id>` 取包名去掉 scope，即 Loader 行 id），一个插件一个子目录；
+- 小队 preset/skills：独立包放 `DSH_HOME/agent-presets/<name>/`；归属某插件时放该插件目录下，声明写进 profile 的 `cordis.patch.yml`；
+- 路径用 `node:path` 拼接、不写死分隔符，写入用临时文件 + rename 原子替换，文件名避免 `: * ? " < > |`；
+- 浏览器端只把可重建的 UI 偏好放 `localStorage`，不放密码/Token。
 
 ## 开发前先查重
 

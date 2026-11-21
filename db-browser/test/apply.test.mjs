@@ -58,19 +58,13 @@ test('apply defers route and tool registration until services are published', ()
   assert.equal(h.registered.disposed, before + 1)
 })
 
-test('Config accepts the saved connection shape and rejects a bad limit', () => {
-  const saved = Config({
-    connections: [
-      { id: 'goats', type: 'mysql', label: 'goats', hosts: [{ host: '10.0.0.1', port: 3306 }], user: 'otc', database: 'goats' },
-      { id: 'ora', type: 'oracle', label: 'ora', hosts: [{ host: '10.0.0.2', port: 1521 }], user: 'u', serviceName: 'testdb' },
-    ],
-  })
+test('Config keeps deployment defaults and rejects a bad limit', () => {
+  const saved = Config({ allowWrites: true, poolMax: 8 })
   assert.equal(saved.maxRows, 500)
   assert.equal(saved.queryTimeoutMs, 30000)
-  assert.equal(saved.allowWrites, false)
-  assert.deepEqual(saved.connections.map((row) => row.id), ['goats', 'ora'])
+  assert.equal(saved.allowWrites, true)
+  assert.equal(saved.poolMax, 8)
   assert.throws(() => Config({ maxRows: 0 }), /maxRows/)
-  assert.throws(() => apply(harness().ctx, { connections: [{ id: 'bad', type: 'nope' }] }), /type/)
 })
 
 test('unloading closes sessions inside the plugin and does not throw', async () => {

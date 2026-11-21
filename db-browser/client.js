@@ -142,6 +142,7 @@ window.__ModuleLoader__.load({
       'routine.onlyProcedure': '只有独立存储过程（procedure）支持在此执行',
       'routine.loading': '加载中…',
       'grid.region': '结果表格（聚焦后可用方向键滚动）',
+      'grid.colWidth': '拖动调整列宽',
       'grid.null': 'NULL',
       'cols.name': '列名',
       'cols.type': '类型',
@@ -163,6 +164,7 @@ window.__ModuleLoader__.load({
       'form.aclOptional': '（ACL，可选）',
     }
     const en = {
+      'grid.colWidth': 'Drag to resize the column',
       'panel': 'Database',
       'loadMore': 'Load more',
       'header.subtitle': 'Connect, browse, and query databases',
@@ -445,11 +447,15 @@ window.__ModuleLoader__.load({
     const GRID_ROW_H = 27
     function VirtualGrid({ columns, rows, wide, label, t }) {
       const { ref, range, onScroll } = useWindowed(rows.length, GRID_ROW_H)
+      const { widths, startResize, hasWidth } = useColumnWidths()
       const topH = range.start * GRID_ROW_H
       const bottomH = Math.max(0, (rows.length - range.end) * GRID_ROW_H)
       return h('div', { className: 'dbb-grid-scroll' + (wide ? ' dbb-grid-scroll-wide' : ''), ref, onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'data grid' },
-        h('table', { className: 'dbb-grid' + (wide ? ' dbb-grid-wide' : '') },
-          h('thead', null, h('tr', null, columns.map((c, i) => h('th', { key: i }, String(c))))),
+        h('table', { className: 'dbb-grid' + (wide ? ' dbb-grid-wide' : ''), style: hasWidth ? { tableLayout: 'fixed' } : undefined },
+          resizeColGroup(columns, widths, hasWidth),
+          h('thead', null, h('tr', null, columns.map((c, i) => h('th', { key: i, className: 'dbb-th' },
+            String(c),
+            h('span', { className: 'dbb-col-resizer', onPointerDown: startResize(i), title: t ? t('grid.colWidth') : 'resize' }))))),
           h('tbody', null,
             topH > 0 ? h('tr', { key: 'top', className: 'dbb-spacer' }, h('td', { colSpan: columns.length, style: { height: topH, padding: 0, border: 'none' } })) : null,
             rows.slice(range.start, range.end).map((row, ri) =>
@@ -745,34 +751,36 @@ window.__ModuleLoader__.load({
         columns
           ? h('div', { className: 'dbb-section' },
               h('div', { className: 'dbb-section-title' }, t('table.columns')),
-              h('div', { className: 'dbb-grid-scroll dbb-cols', tabIndex: 0, role: 'region', 'aria-label': t('table.columns') },
-                h('table', { className: 'dbb-grid' },
-                  h('thead', null, h('tr', null, ['', t('cols.name'), t('cols.type'), t('cols.null'), t('cols.key'), t('cols.default'), t('cols.extra')].map((x, i) => h('th', { key: i }, x)))),
-                  h('tbody', null, columns.map((c, i) =>
-                    h('tr', { key: i },
-                      h('td', { className: 'dbb-muted' }, i + 1),
-                      h('td', null, c.name), h('td', null, c.type),
-                      h('td', null, c.nullable ? t('cols.yes') : t('cols.no')), h('td', null, c.key ?? ''),
-                      h('td', null, c.default === null || c.default === undefined ? '' : String(c.default)),
-                      h('td', null, c.extra ?? '')))),
-                ),
-              ),
+              h(ResizableTable, {
+                columns: ['', t('cols.name'), t('cols.type'), t('cols.null'), t('cols.key'), t('cols.default'), t('cols.extra')],
+                rows: columns.map((c, i) => [
+                  { className: 'dbb-muted', content: i + 1 },
+                  { content: c.name },
+                  { content: c.type },
+                  { content: c.nullable ? t('cols.yes') : t('cols.no') },
+                  { content: c.key ?? '' },
+                  { content: c.default === null || c.default === undefined ? '' : String(c.default) },
+                  { content: c.extra ?? '' },
+                ]),
+                label: t('table.columns'),
+                t,
+              }),
             )
           : (error ? null : h('div', { className: 'dbb-muted' }, t('tree.loading'))),
         indexes && indexes.length > 0
           ? h('div', { className: 'dbb-section' },
               h('div', { className: 'dbb-section-title' }, t('table.indexes')),
-              h('div', { className: 'dbb-grid-scroll dbb-cols', tabIndex: 0, role: 'region', 'aria-label': t('table.indexes') },
-                h('table', { className: 'dbb-grid' },
-                  h('thead', null, h('tr', null, [t('cols.name'), t('idx.columns'), t('idx.unique'), t('cols.type')].map((x, i) => h('th', { key: i }, x)))),
-                  h('tbody', null, indexes.map((idx, i) =>
-                    h('tr', { key: i },
-                      h('td', null, idx.name),
-                      h('td', { title: idx.columns.join(', ') }, idx.columns.join(', ')),
-                      h('td', null, idx.unique ? t('cols.yes') : t('cols.no')),
-                      h('td', null, idx.type ?? '')))),
-                ),
-              ),
+              h(ResizableTable, {
+                columns: [t('cols.name'), t('idx.columns'), t('idx.unique'), t('cols.type')],
+                rows: indexes.map((idx) => [
+                  { content: idx.name },
+                  { content: idx.columns.join(', '), title: idx.columns.join(', ') },
+                  { content: idx.unique ? t('cols.yes') : t('cols.no') },
+                  { content: idx.type ?? '' },
+                ]),
+                label: t('table.indexes'),
+                t,
+              }),
             )
           : null,
         h('div', { className: 'dbb-section' },
@@ -994,6 +1002,55 @@ window.__ModuleLoader__.load({
     }
 
     const KEY_ROW_H = 25
+    /** Shared column-resize wiring: drag the right edge of a header cell. */
+    function useColumnWidths() {
+      const [widths, setWidths] = useState({})
+      const startResize = (index) => (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const cell = event.currentTarget.parentElement
+        if (!cell) return
+        const startX = event.clientX
+        const startW = widths[index] ?? cell.getBoundingClientRect().width
+        const move = (e) => {
+          const next = Math.max(48, startW + e.clientX - startX)
+          setWidths((prev) => ({ ...prev, [index]: Math.round(next) }))
+        }
+        const up = () => {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+      }
+      return { widths, startResize, hasWidth: Object.keys(widths).length > 0 }
+    }
+
+    function resizeColGroup(columns, widths, hasWidth) {
+      if (!hasWidth) return null
+      return React.createElement('colgroup', null, columns.map((_, i) =>
+        React.createElement('col', { key: i, style: widths[i] ? { width: widths[i] + 'px' } : undefined })))
+    }
+
+    /** Simple catalog table with draggable column widths. */
+    function ResizableTable({ columns, rows, label, t }) {
+      const { widths, startResize, hasWidth } = useColumnWidths()
+      return React.createElement('div', { className: 'dbb-grid-scroll dbb-cols', tabIndex: 0, role: 'region', 'aria-label': label },
+        React.createElement('table', { className: 'dbb-grid', style: hasWidth ? { tableLayout: 'fixed' } : undefined },
+          resizeColGroup(columns, widths, hasWidth),
+          React.createElement('thead', null, React.createElement('tr', null, columns.map((title, i) =>
+            React.createElement('th', { key: i, className: 'dbb-th' },
+              String(title),
+              React.createElement('span', { className: 'dbb-col-resizer', onPointerDown: startResize(i), title: t ? t('grid.colWidth') : 'resize' }))))),
+          React.createElement('tbody', null, rows.map((cells, ri) =>
+            React.createElement('tr', { key: ri }, cells.map((cell, ci) => {
+              const descriptor = cell && typeof cell === 'object' && 'content' in cell ? cell : { content: cell }
+              return React.createElement('td', { key: ci, className: descriptor.className, title: descriptor.title }, descriptor.content)
+            })))),
+        ),
+      )
+    }
+
     function VirtualKeyList({ keys, selected, openKey }) {
       const { ref, range, onScroll } = useWindowed(keys.length, KEY_ROW_H)
       return h('div', { className: 'dbb-key-window', ref, onScroll },
@@ -1137,7 +1194,9 @@ window.__ModuleLoader__.load({
 .dbb-title{font-size:16px;font-weight:600}
 .dbb-sub{color:var(--dsw-alias-label-secondary);font-size:12px}
 .dbb-body{display:flex;flex:1;min-height:0}
-.dbb-aside{width:250px;flex:none;border-right:1px solid var(--dsw-alias-border-l1);overflow:auto;background:var(--dsw-alias-bg-layer-1)}
+.dbb-aside{flex:none;border-right:1px solid var(--dsw-alias-border-l1);overflow:auto;background:var(--dsw-alias-bg-layer-1)}
+.dbb-splitter{width:6px;flex:none;cursor:col-resize;touch-action:none;background:transparent}
+.dbb-splitter:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent)}
 .dbb-main{flex:1;min-width:0;overflow:hidden;display:flex;flex-direction:column}
 .dbb-tabs{display:flex;align-items:stretch;gap:2px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);overflow:auto}
 .dbb-tab{display:inline-flex;align-items:center;gap:6px;max-width:220px;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);padding:8px 8px 6px;cursor:pointer;font-size:12px}
@@ -1187,9 +1246,12 @@ window.__ModuleLoader__.load({
 .dbb-sql-editor{min-height:110px;resize:vertical;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
 .dbb-sql-editor:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .dbb-grid-wrap{display:flex;flex-direction:column;gap:4px;min-height:0}
-.dbb-grid-scroll{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;max-height:46vh}
+.dbb-grid-scroll{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;max-height:46vh;resize:vertical;min-height:96px}
 .dbb-grid{border-collapse:collapse;width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .dbb-grid th{position:sticky;top:0;background:var(--dsw-alias-bg-layer-2);text-align:left;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);white-space:nowrap}
+.dbb-th{position:relative}
+.dbb-col-resizer{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:2}
+.dbb-col-resizer:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent)}
 .dbb-grid td{padding:4px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dbb-grid-wide td{white-space:pre-wrap;max-width:none;vertical-align:top}
 .dbb-grid-scroll-wide{max-height:none}
@@ -1249,6 +1311,30 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
 `
 
     function DbPanel(props) {
+      const [asideWidth, setAsideWidth] = useState(() => {
+        try {
+          const saved = Number(globalThis.localStorage?.getItem('db-browser.asideWidth'))
+          if (Number.isFinite(saved) && saved >= 160 && saved <= 560) return saved
+        } catch { /* storage unavailable */ }
+        return 250
+      })
+      const startAsideResize = useCallback((event) => {
+        event.preventDefault()
+        const startX = event.clientX
+        const startW = event.currentTarget.parentElement?.querySelector('.dbb-aside')?.getBoundingClientRect().width ?? asideWidth
+        let latest = startW
+        const move = (e) => {
+          latest = Math.min(560, Math.max(160, startW + (e.clientX - startX)))
+          setAsideWidth(Math.round(latest))
+        }
+        const up = () => {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+          try { globalThis.localStorage?.setItem('db-browser.asideWidth', String(Math.round(latest))) } catch { /* ignore */ }
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+      }, [asideWidth])
       const t = typeof props.t === 'function' ? props.t : (props.locale?.t ?? ((k) => k))
       const [data, setData] = useState(null) // { connections, allowWrites, maxRows }
       const [fatal, setFatal] = useState(null)
@@ -1578,7 +1664,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
         ),
         h(ErrorBar, { error: fatal?.message, onClose: () => setFatal(null), t }),
         h('div', { className: 'dbb-body' },
-          h('div', { className: 'dbb-aside' },
+          h('div', { className: 'dbb-aside', style: { width: asideWidth } },
             h('div', { className: 'dbb-actions' },
               h('button', { className: 'dbb-btn dbb-btn-primary', onClick: () => setEditing({}) }, '+ ' + t('newConnection'))),
             data === null && fatal === null
@@ -1592,6 +1678,7 @@ dialog.dbb-modal:modal{overscroll-behavior:contain}
                 renderConnectionNode(conn),
               )),
           ),
+          h('div', { className: 'dbb-splitter', role: 'separator', 'aria-orientation': 'vertical', onPointerDown: startAsideResize, onDoubleClick: () => { setAsideWidth(250); try { globalThis.localStorage?.setItem('db-browser.asideWidth', '250') } catch { /* ignore */ } }, title: '拖动调整列表宽度，双击恢复默认' }),
           h('div', { className: 'dbb-main' }, renderMain()),
         ),
         editing !== null

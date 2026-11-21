@@ -2,10 +2,18 @@
 // Passwords come from the environment: passwords[id] names the variable, otherwise DBB_PASSWORD_<ID>.
 import { createInterface } from 'node:readline'
 import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { isAbsolute, resolve } from 'node:path'
 import { DbCore, buildToolDefinitions } from './index.js'
 
-const CONFIG_FILE = process.env.DBB_CONNECTIONS_FILE ?? resolve(process.cwd(), 'db-browser.connections.json')
+function defaultConfigFile() {
+  const home = process.env.DSH_HOME
+    ? (isAbsolute(process.env.DSH_HOME) ? process.env.DSH_HOME : resolve(homedir(), process.env.DSH_HOME))
+    : resolve(homedir(), '.dsh')
+  return resolve(home, 'plugins', 'db-browser', 'connections.json')
+}
+
+const CONFIG_FILE = process.env.DBB_CONNECTIONS_FILE ?? defaultConfigFile()
 
 function loadConfig() {
   if (!existsSync(CONFIG_FILE)) {

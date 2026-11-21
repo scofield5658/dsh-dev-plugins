@@ -1,5 +1,8 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import {
   HttpError, asBrokers, asSasl, clampOffset, encodeHeaders, encodeMessage, mapPool, readBody, sendJson, apply,
 } from '../index.js'
@@ -183,6 +186,40 @@ test('routes: GET /defaults returns sanitized plugin config', async () => {
   assert.equal(result.data.ssl, true)
   assert.deepEqual(result.data.sasl, { mechanism: 'plain', username: 'u' })
   assert.equal(JSON.stringify(result.data).includes('must-not-leak'), false)
+})
+
+test('routes: /config persists the form in the plugin directory', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'kafka-tool-'))
+  const previous = process.env.DSH_HOME
+  try {
+    process.env.DSH_HOME = dir
+    const { handler } = mount({ brokers: ['seed:9092'], ssl: true })
+    const initial = await call(handler, 'GET', '/config')
+    assert.equal(initial.status, 200)
+    assert.deepEqual(initial.data.config.connection.brokers, ['seed:9092'])
+
+    const saved = await call(handler, 'PUT', '/config', {
+      connection: {
+        brokers: ['a:9092'],
+        ssl: true,
+        sasl: { mechanism: 'plain', username: 'u', password: 'must-not-persist' },
+      },
+      refresh: { enabled: false, intervalSec: 30 },
+    })
+    assert.equal(saved.status, 200)
+    assert.equal(JSON.stringify(saved.data).includes('must-not-persist'), false)
+
+    const file = path.join(dir, 'plugins', 'kafka-tool', 'config.json')
+    const body = JSON.parse(await readFile(file, 'utf8'))
+    assert.deepEqual(body.connection.brokers, ['a:9092'])
+    assert.deepEqual(body.connection.sasl, { mechanism: 'plain', username: 'u' })
+    assert.equal(body.refresh.enabled, false)
+    assert.equal(body.refresh.intervalSec, 30)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('routes: validation failures return 4xx JSON', async () => {

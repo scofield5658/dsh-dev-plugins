@@ -31,6 +31,10 @@ pnpm install --prod
 
 升级时拉取本仓库，然后在插件管理中重载对应插件。
 
+## 用户配置
+
+插件目录只放代码和默认配置，不放用户自己的配置或本地数据。连接、Token、名册、模型路由等统一放在 DSH 提供的 `$DSH_HOME`（默认 `~/.dsh`，Windows / macOS / Linux 一致）下：优先用插件 Config、凭据存储和 `ctx.storageDomain`，确需自己落盘时用 `$DSH_HOME/plugins/<plugin-id>/`（`<plugin-id>` 为包名去掉 scope，例如 `squad-dashboard`）。完整约束见 [AGENTS.md](AGENTS.md) 的「用户配置与本地数据」。
+
 ## 开发
 
 安装依赖、跑测试、改锁文件，都在该插件目录内进行：

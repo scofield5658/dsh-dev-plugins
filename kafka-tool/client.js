@@ -18,6 +18,8 @@ window.__ModuleLoader__.load({
     const panelCache = {
       connInfo: null,
       connForm: null,
+      auto: null,
+      configSnapshot: null,
       subId: null,
       selectedTopics: null,
       view: null,
@@ -585,13 +587,8 @@ window.__ModuleLoader__.load({
 
     function KafkaExplorerApp(props) {
       const t = props.t
-      const [connForm, setConnForm] = useState(() => {
-        if (panelCache.connForm !== null) return panelCache.connForm
-        try {
-          return { brokers: '', ssl: false, sasl: false, mechanism: 'plain', username: '', password: '', ...JSON.parse(localStorage.getItem('dsh-kafka-tool:conn') ?? '{}') }
-        } catch {
-          return { brokers: '', ssl: false, sasl: false, mechanism: 'plain', username: '', password: '' }
-        }
+      const [connForm, setConnForm] = useState(() => panelCache.connForm ?? {
+        brokers: '', ssl: false, sasl: false, mechanism: 'plain', username: '', password: '',
       })
       const [conn, setConn] = useState(() => panelCache.connInfo)
       const [connError, setConnError] = useState(null)
@@ -630,13 +627,8 @@ window.__ModuleLoader__.load({
       const [olderLoading, setOlderLoading] = useState(false)
       const [resuming, setResuming] = useState(() => panelCache.connInfo !== null)
 
-      const [auto, setAuto] = useState(() => {
-        try {
-          return { enabled: true, intervalSec: 10, ...JSON.parse(localStorage.getItem('dsh-kafka-tool:refresh') ?? '{}') }
-        } catch {
-          return { enabled: true, intervalSec: 10 }
-        }
-      })
+      const [auto, setAuto] = useState(() => panelCache.auto ?? { enabled: true, intervalSec: 10 })
+      const [configReady, setConfigReady] = useState(() => panelCache.connForm !== null)
       const [lastUpdate, setLastUpdate] = useState(null)
 
       const [filters, setFilters] = useState({ partition: 'all', key: '', offsetMin: '', offsetMax: '' })
@@ -651,25 +643,71 @@ window.__ModuleLoader__.load({
 
       const connRef = useRef(conn)
       const subRef = useRef(sub)
+      const persistedRef = useRef(panelCache.configSnapshot ?? null)
       useEffect(() => { connRef.current = conn }, [conn])
       useEffect(() => { subRef.current = sub }, [sub])
 
       useEffect(() => {
         panelCache.connInfo = conn
         panelCache.connForm = connForm
+        panelCache.auto = auto
+        panelCache.configSnapshot = persistedRef.current
         panelCache.selectedTopics = selectedTopics
         panelCache.view = view
         panelCache.subId = sub?.id ?? null
-      }, [conn, connForm, selectedTopics, view, sub])
+      }, [conn, connForm, auto, selectedTopics, view, sub])
+
+      // The host file is the source of truth. The password stays in this mount.
+      useEffect(() => {
+        if (configReady) return
+        let alive = true
+        const apply = (connection, refresh) => {
+          if (!alive || !connection) return
+          setConnForm(prev => ({
+            ...prev,
+            brokers: Array.isArray(connection.brokers) ? connection.brokers.join(', ') : prev.brokers,
+            ssl: connection.ssl === true,
+            sasl: connection.sasl !== null && connection.sasl !== undefined,
+            mechanism: connection.sasl?.mechanism ?? prev.mechanism,
+            username: connection.sasl?.username ?? prev.username,
+          }))
+          if (refresh) setAuto(prev => ({ ...prev, ...refresh }))
+          // Remember what the host already has so an unchanged mount does not rewrite the file.
+          persistedRef.current = JSON.stringify({
+            connection,
+            refresh: refresh ?? { enabled: true, intervalSec: 10 },
+          })
+        }
+        api('/config')
+          .then(d => apply(d.config?.connection, d.config?.refresh))
+          .catch(() => api('/defaults').then(d => apply({
+            brokers: Array.isArray(d.brokers) ? d.brokers : [],
+            ssl: d.ssl === true,
+            sasl: d.sasl ?? null,
+          })).catch(() => {}))
+          .finally(() => { if (alive) setConfigReady(true) })
+        return () => { alive = false }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
 
       useEffect(() => {
-        // The password stays in this mount. It is not written to localStorage.
+        if (!configReady) return
         const { password, ...rest } = connForm
-        localStorage.setItem('dsh-kafka-tool:conn', JSON.stringify(rest))
-      }, [connForm])
-      useEffect(() => {
-        localStorage.setItem('dsh-kafka-tool:refresh', JSON.stringify(auto))
-      }, [auto])
+        const connection = {
+          brokers: String(rest.brokers ?? '').split(',').map(one => one.trim()).filter(one => one !== ''),
+          ssl: rest.ssl === true,
+          sasl: rest.sasl ? { mechanism: rest.mechanism, username: rest.username } : null,
+        }
+        const payload = { connection, refresh: auto }
+        const key = JSON.stringify(payload)
+        if (key === persistedRef.current) return
+        const timer = setTimeout(() => {
+          api('/config', { method: 'PUT', body: payload })
+            .then(() => { persistedRef.current = key })
+            .catch(() => {})
+        }, 400)
+        return () => clearTimeout(timer)
+      }, [connForm, auto, configReady])
 
       const bumpMessages = useCallback(() => setMessagesVersion(v => v + 1), [])
 
@@ -1051,20 +1089,6 @@ window.__ModuleLoader__.load({
           return
         }
         setResuming(false)
-        if (localStorage.getItem('dsh-kafka-tool:conn') === null) {
-          api('/defaults')
-            .then(d => {
-              setConnForm(prev => ({
-                ...prev,
-                brokers: Array.isArray(d.brokers) && d.brokers.length > 0 ? d.brokers.join(', ') : prev.brokers,
-                ssl: d.ssl === true,
-                sasl: d.sasl !== null && d.sasl !== undefined,
-                mechanism: d.sasl?.mechanism ?? prev.mechanism,
-                username: d.sasl?.username ?? prev.username,
-              }))
-            })
-            .catch(() => {})
-        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
 
@@ -1570,7 +1594,7 @@ dialog.kx-modal:modal { overscroll-behavior: contain; }
 .kx-tab { position: relative; border: none; background: transparent; padding: 2px 10px; border-radius: 4px; cursor: pointer; color: var(--dsw-alias-label-secondary); }
 .kx-tab[aria-selected="true"] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
 .kx-tab[aria-selected="true"]::after { content: ""; position: absolute; inset: auto 6px 1px; border-bottom: 2px solid var(--dsw-alias-brand-primary); }
-.kx-pre { margin: 0; padding: 8px; background: var(--dsw-alias-markdown-code-block); border-radius: 6px; overflow: auto; max-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+.kx-pre { margin: 0; padding: 8px; background: var(--dsw-alias-markdown-code-block); border-radius: 6px; overflow: auto; max-height: 320px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 .kx-hint { color: var(--dsw-alias-label-tertiary); margin-bottom: 4px; }
 .kx-null { color: var(--dsw-alias-label-dimmed); }
 .kx-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--dsw-alias-label-tertiary); border-top-color: transparent; border-radius: 50%; animation: kx-spin 0.8s linear infinite; }

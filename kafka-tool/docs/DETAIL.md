@@ -11,8 +11,8 @@ the main area.
 
 Enter one or more broker addresses (`host:9092`, comma separated), optionally
 enable **SSL** and **SASL** (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512), then click
-**Connect**. The form is remembered in the browser (the password is not).
-Default brokers can be preset through the plugin configuration.
+**Connect**. The form is saved to `$DSH_HOME/plugins/kafka-tool/config.json` (the password stays in page memory and is never written).
+Deployment defaults can be preset through the plugin configuration.
 
 Connecting is always your explicit action. Switching windows or panels keeps
 everything alive in the Harness host process (idle objects are swept after 15

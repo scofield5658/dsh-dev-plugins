@@ -1,12 +1,36 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { DbCore, scanRedisKeys } from '../index.js'
-test('concurrent saves merge current configuration', async () => {
- let current = { connections: [] }
- const core = new DbCore({ fiber: { entry: {} }, get: () => ({ edit: async (_, update) => { current = update(current) } }) }, {})
- await Promise.all(['a', 'b'].map(id => core.saveConnection({ id, type: 'redis', hosts: [{ host: 'localhost' }] })))
- assert.deepEqual(current.connections.map(c => c.id).sort(), ['a', 'b'])
+test('concurrent saves merge current configuration in the plugin directory', async () => {
+ const dir = await mkdtemp(path.join(tmpdir(), 'db-browser-'))
+ try {
+  const file = path.join(dir, 'connections.json')
+  const core = new DbCore({ get() {} }, {}, { connectionsFile: file })
+  await Promise.all(['a', 'b'].map(id => core.saveConnection({ id, type: 'redis', hosts: [{ host: 'localhost' }] })))
+  const saved = JSON.parse(await readFile(file, 'utf8'))
+  assert.deepEqual(saved.connections.map(c => c.id).sort(), ['a', 'b'])
+  assert.deepEqual(core.list().map(c => c.id).sort(), ['a', 'b'])
+ } finally {
+  await rm(dir, { recursive: true, force: true })
+ }
 })
+test('DbCore loads connections from the plugin file', async () => {
+ const dir = await mkdtemp(path.join(tmpdir(), 'db-browser-load-'))
+ try {
+  const file = path.join(dir, 'connections.json')
+  await writeFile(file, JSON.stringify({ connections: [
+   { id: 'file-mysql', type: 'mysql', user: 'u', hosts: [{ host: 'h' }] },
+  ] }))
+  const core = new DbCore({ get() {} }, {}, { connectionsFile: file })
+  assert.deepEqual(core.list().map(c => c.id), ['file-mysql'])
+ } finally {
+  await rm(dir, { recursive: true, force: true })
+ }
+})
+
 test('list preview is capped and continues', async () => {
  const core = new DbCore({ get() {} }, {})
  const values = Array.from({ length: 2100 }, (_, i) => String(i))

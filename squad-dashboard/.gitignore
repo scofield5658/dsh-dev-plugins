@@ -1,0 +1,11 @@
+node_modules/
+*.log
+.DS_Store
+
+# User configuration and secrets stay outside the plugin package (see ../../AGENTS.md).
+# Runtime configuration defaults to $DSH_HOME (usually ~/.dsh).
+squad-member-models.json
+squad-remote.json
+*.local.json
+.env
+.env.*

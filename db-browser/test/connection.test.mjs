@@ -180,14 +180,14 @@ test('passwords are grant records under a legal credential key', async () => {
   const core = new DbCore({ get: (name) => (name === 'credentials' ? credentials : undefined) }, {})
   const segment = /^[a-z][a-z0-9-]*$/
 
-  await core.savePassword('titans_goldendb_dev', 's3cret')
+  await core.savePassword('demo_db', 's3cret')
   await core.savePassword('a-b', 'hyphen')
   await core.savePassword('a_b', 'underscore')
-  await core.savePassword('goats', 'plain')
+  await core.savePassword('demo-db', 'plain')
 
   const keyFor = (id) => `db-browser/c${Buffer.from(id, 'utf8').toString('hex')}`
   assert.equal(records.size, 4)
-  for (const id of ['titans_goldendb_dev', 'a-b', 'a_b', 'goats']) {
+  for (const id of ['demo_db', 'a-b', 'a_b', 'demo-db']) {
     const key = keyFor(id)
     const record = records.get(key)
     assert.ok(record, `missing record for ${id}`)
@@ -196,14 +196,14 @@ test('passwords are grant records under a legal credential key', async () => {
     assert.deepEqual(Object.keys(record), ['kind', 'payload'])
   }
   assert.notEqual(keyFor('a-b'), keyFor('a_b'))
-  assert.equal(await core.passwordOf('titans_goldendb_dev'), 's3cret')
+  assert.equal(await core.passwordOf('demo_db'), 's3cret')
   assert.equal(await core.passwordOf('a_b'), 'underscore')
-  assert.equal(await core.passwordOf('goats'), 'plain')
+  assert.equal(await core.passwordOf('demo-db'), 'plain')
 
-  await core.savePassword('titans_goldendb_dev', '')
-  assert.equal(records.has(keyFor('titans_goldendb_dev')), false)
-  assert.equal(await core.passwordOf('titans_goldendb_dev'), undefined)
-  assert.equal(await core.passwordOf('goats'), 'plain')
+  await core.savePassword('demo_db', '')
+  assert.equal(records.has(keyFor('demo_db')), false)
+  assert.equal(await core.passwordOf('demo_db'), undefined)
+  assert.equal(await core.passwordOf('demo-db'), 'plain')
 })
 
 test('normalizeConnection: oracle accepts sid as an alternative to serviceName', () => {

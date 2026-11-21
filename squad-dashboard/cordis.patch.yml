@@ -1,0 +1,9 @@
+- insert:
+    - id: squad-dashboard
+      name: '@local/squad-dashboard'
+      config:
+        pollMs: 10000
+        squadPresetPrefix: 'squad-'
+        # Optional aliases for squad presets that do not follow the prefix:
+        # squadKinds:
+        #   engineering: ['crew-dev-leader']

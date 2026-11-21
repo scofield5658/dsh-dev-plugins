@@ -5,4 +5,3 @@
         maxRows: 500
         queryTimeoutMs: 30000
         allowWrites: false
-        connections: []

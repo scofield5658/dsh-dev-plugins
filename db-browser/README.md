@@ -16,42 +16,51 @@
 
 ## 连接配置
 
-在面板中点击「新建连接」，或直接编辑插件配置：
+连接定义保存在插件自己的配置目录：
+
+```
+$DSH_HOME/plugins/db-browser/connections.json
+默认 ~/.dsh/plugins/db-browser/connections.json
+```
+
+在面板中点击「新建连接」并保存即可写入该文件；也可以直接编辑。文件结构：
+
+```json
+{
+  "connections": [
+    {
+      "id": "my-mysql",
+      "label": "业务库",
+      "type": "mysql",
+      "hosts": [{ "host": "10.0.0.1", "port": 3306 }],
+      "user": "root",
+      "database": "app"
+    },
+    {
+      "id": "my-redis",
+      "type": "redis",
+      "mode": "sentinel",
+      "hosts": [{ "host": "10.0.0.3", "port": 26379 }],
+      "masterName": "mymaster"
+    }
+  ]
+}
+```
+
+`type` 支持 `mysql | tdsql-mysql | goldendb | postgres | tdsql-pg | oracle | redis`；多个主机按顺序故障切换。Oracle 需要 `serviceName`、`sid` 或 `connectString` 之一。
+
+密码通过面板的连接表单保存到 DSH 凭据存储，不写进该文件；插件目录内不保存任何用户配置。
+
+插件 Config 只保留部署级默认值：
 
 ```yaml
 config:
   allowWrites: false
   poolMax: 4               # 每个连接的连接池上限（1-50）
-  # 特性覆盖：在默认值之上按类型微调（默认值见「特性矩阵」）
   features:
     goldendb:
       procedures: false    # TDSQL/GoldenDB 不支持存储过程，默认已隐藏
-  connections:
-    - id: my-mysql
-      label: 业务库
-      type: mysql          # mysql | tdsql-mysql | goldendb | postgres | tdsql-pg | oracle | redis
-      hosts: [{ host: 10.0.0.1, port: 3306 }]   # 多个主机按顺序故障切换
-      user: root
-      database: app
-    - id: my-pg
-      type: postgres       # 或 tdsql-pg
-      hosts: [{ host: 10.0.0.4, port: 5432 }]
-      user: postgres
-      database: app        # 省略时连接默认的 postgres 库
-    - id: my-oracle
-      type: oracle
-      hosts: [{ host: 10.0.0.2, port: 1521 }]
-      user: scott
-      serviceName: ORCLPDB1  # 或改用 sid: ORCL；connectString 完整描述符优先于两者
-    - id: my-redis
-      type: redis
-      mode: sentinel       # standalone | sentinel | cluster
-      hosts: [{ host: 10.0.0.3, port: 26379 }]
-      masterName: mymaster # sentinel 模式必填
-      db: 0
 ```
-
-密码通过面板的连接表单保存（写入凭据存储），不要写进配置。
 
 ## 特性矩阵
 
@@ -83,7 +92,8 @@ config:
 仓库内含一个独立的 stdio MCP server（`mcp-server.js`），供本 DSH 之外的 Agent（Claude Code、其他 DSH 实例等）调用同样的 `db_browser` / `redis_browser` 工具：
 
 ```bash
-# 连接配置（不含密码；字段与插件 config 一致）
+# 默认读取 $DSH_HOME/plugins/db-browser/connections.json（与面板共用）
+# 需要指向其他文件时，用 DBB_CONNECTIONS_FILE 覆盖
 export DBB_CONNECTIONS_FILE=/path/to/db-browser.connections.json
 # 密码走环境变量：约定 DBB_PASSWORD_<ID>（id 大写、非字母数字转 _），
 # 或在配置文件的 "passwords": { "<id>": "ENV_VAR_NAME" } 中指定变量名
@@ -98,7 +108,7 @@ MCP 客户端配置示例（Claude Code）：
     "db-browser": {
       "command": "node",
       "args": ["/path/to/dsh-db-browser-plugin/mcp-server.js"],
-      "env": { "DBB_CONNECTIONS_FILE": "/path/to/db-browser.connections.json", "DBB_PASSWORD_MY_MYSQL": "..." }
+      "env": { "DBB_PASSWORD_MY_MYSQL": "..." }
     }
   }
 }
@@ -118,7 +128,7 @@ pnpm install --prod   # 安装 mysql2 / ioredis / oracledb 驱动（oracledb 的
 
 ## 开发约定：冷启动陷阱（改动前必读）
 
-热重载期间一切正常、重启才暴雷的两类问题，本仓库都踩过（2026-11-19）：
+下面两类问题容易在热重载期间看似正常、重启时才暴露：
 
 ### 1. 凭据存储契约
 
