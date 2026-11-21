@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "小队仪表盘",
+    "description": "跨工作区的只读小队看板：按工作区聚合小队会话，在侧边栏面板展示成员、活动状态与 Agent Team 任务。本地视图基于小队 preset 工作，并可配置可选的远端 Multica 看板。"
+  },
   "panel": "产研ECC",
   "title": "产研ECC仪表盘",
   "subtitle": "各小队成员与当前事项",

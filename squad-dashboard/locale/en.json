@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Squad dashboard",
+    "description": "Read-only squad dashboard: discovers squad sessions across workspaces and shows each squad's members, activity and Agent Team tasks in a sidebar panel. The local view works from squad presets; an optional remote Multica board can be configured."
+  },
   "panel": "ECC",
   "title": "ECC Dashboard",
   "subtitle": "Members and the work currently in progress",

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WeChat Work push",
+    "description": "Maintain multiple WeChat Work (企业微信) group-bot push channels locally — each with an identifier, a purpose, and a webhook key stored in plaintext — and send text or Markdown messages to their groups. The qwechatbot_push agent tool lists channels and pushes by purpose; the sidebar panel manages channels and lets you test a push. The webhook prefix https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key= is fixed in the plugin config, so you only maintain the key."
+  }
+}

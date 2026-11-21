@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "企业微信推送",
+    "description": "在本地维护多个企业微信群机器人推送通道，每个通道含标识符 ID、用途与推送凭据（Webhook key，明文存储），并向群发送文本或 Markdown 消息。qwechatbot_push Agent 工具按用途选择通道并推送；侧边栏面板管理通道并支持测试推送。Webhook 前缀 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key= 已在插件配置中固定，你只需维护 key。"
+  }
+}

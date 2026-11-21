@@ -12,6 +12,8 @@
 | --- | --- | --- |
 | [`db-browser/`](db-browser/README.md) | `@local/db-browser` | 侧边栏数据库面板，并给 Agent 暴露查询工具。覆盖 MySQL 族、PostgreSQL 族、Oracle 与 Redis。 |
 | [`kafka-tool/`](kafka-tool/README.md) | `@local/kafka-tool` | 侧边栏 Kafka 面板。浏览 topic 与消费者组，订阅消息流；Agent 工具只读。 |
+| [`squad-dashboard/`](squad-dashboard/README.md) | `@local/squad-dashboard` | 跨工作区小队看板（产研 ECC）：在侧边栏展示各小队成员、活动与 Agent Team 任务。 |
+| [`qwechatbot-push/`](qwechatbot-push/README.md) | `@local/qwechatbot-push` | 企业微信群机器人推送：本地维护多个推送通道，向群发文本 / Markdown，并给 Agent 暴露推送工具。 |
 
 连接方式、配置、安全限制和各插件自己的开发约定，见对应目录里的 README。
 
@@ -20,12 +22,7 @@
 在目标插件目录安装生产依赖，再在 DeepSeek Harness 里用 **Plugins → Add plugin** 选择该目录。本地目录以 link 方式装入，驱动从该目录的 `node_modules` 解析。
 
 ```bash
-cd db-browser
-pnpm install --prod
-```
-
-```bash
-cd kafka-tool
+cd <plugin-dir>   # db-browser / kafka-tool / squad-dashboard / qwechatbot-push
 pnpm install --prod
 ```
 
@@ -40,7 +37,7 @@ pnpm install --prod
 安装依赖、跑测试、改锁文件，都在该插件目录内进行：
 
 ```bash
-cd db-browser
+cd <plugin-dir>
 pnpm test
 ```
 

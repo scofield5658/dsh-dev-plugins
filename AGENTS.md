@@ -4,13 +4,7 @@
 
 新插件必须是开发者在写代码、联调或排障时会打开的工具。对外说明见根目录 `README.md`。
 
-当前插件：
-
-| 子目录 | 包名 |
-| --- | --- |
-| `db-browser/` | `@local/db-browser` |
-| `kafka-tool/` | `@local/kafka-tool` |
-| `squad-dashboard/` | `@local/squad-dashboard` |
+当前插件清单以根目录 `README.md` 的「插件」表为唯一维护处：新增或移除插件时只改那里，避免两处列表漂移。
 
 ## 目录边界
 

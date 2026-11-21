@@ -1,0 +1,6 @@
+- insert:
+    - id: qwechatbot-push
+      name: '@local/qwechatbot-push'
+      config:
+        # The webhook prefix is a fixed code constant (DEFAULT_WEBHOOK_BASE); only per-channel keys are maintained.
+        timeoutMs: 10000
