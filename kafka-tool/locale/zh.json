@@ -90,7 +90,6 @@
     "stream.stop": "停止",
     "stream.subscribe": "订阅",
     "stream.timestamp.invalid": "时间戳无效",
-    "table.colWidth": "拖动调整列宽",
     "topics.begin": "起始",
     "topics.col.name": "Topic",
     "topics.col.partitions": "分区数",

@@ -66,21 +66,25 @@ test('the panel mounts on the host React and renders the explorer shell', () => 
   assert.match(html, /class="kx-viewtabs"/, 'view tabs render')
 })
 
-test('every data list uses the one resizable table implementation', () => {
+test('every data list renders through the one srp-table DataTable', () => {
   const src = readFileSync(source, 'utf8')
   // stream, topics, consumer groups, and both offset detail tables
-  assert.equal((src.match(/h\(VirtualTable, \{/g) || []).length, 5,
-    'all five data lists render through VirtualTable')
-  // The table declares its columns and injects a handle per header cell.
-  assert.match(src, /h\(ColumnGroup, \{ count: columnCount, widths \}\)/)
-  assert.match(src, /withColumnResizers\(head, startResize, t\)/)
-  assert.match(src, /className: 'kx-col-resizer'/)
-  assert.match(src, /hasWidth \? \{ tableLayout: 'fixed' \} : undefined/)
+  assert.equal((src.match(/h\(DataTable, \{/g) || []).length, 5, 'all five data lists render through DataTable')
+  assert.match(src, /from '@guozhi5658\/srp-table'/)
+  assert.match(src, /\.use\(features\.fillRemainingWidth\(\)\)\s*\.use\(features\.columnResize\(/,
+    'the filler column is added before columnResize so it gets no handle')
+  // Theme and language stay with the host: colors come from host tokens, the empty state is translated.
+  assert.match(src, /'--bgcolor': 'var\(--dsw-alias-bg-base\)'/)
+  assert.match(src, /components: \{ EmptyContent \}/)
   // The stream list kept its six columns after the conversion.
-  for (const cls of ['kx-col-time', 'kx-col-topic', 'kx-col-part', 'kx-col-offset', 'kx-col-key', 'kx-col-size']) {
-    assert.match(src, new RegExp(`className: 'kx-cell ${cls}'`), `${cls} header exists`)
+  for (const key of ['timestamp', 'topic', 'partition', 'offset', 'key', 'size']) {
+    assert.match(src, new RegExp(`\\{ key: '${key}', name: t\\('stream\\.col\\.`), `stream column ${key}`)
   }
-  assert.match(src, /const renderMessageRow = useCallback\(msg => \{[\s\S]*?h\('tr', \{/, 'message rows are table rows')
+})
+
+test('the bundled table never loads a remote empty-state image', () => {
+  const { src } = loadArtifact()
+  assert.doesNotMatch(src, /img\.alicdn\.com\/tfs/)
 })
 
 test('topic and consumer-group details sit in a resizable vertical pane group', () => {

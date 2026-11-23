@@ -1,4 +1,26 @@
+import { BaseTable, features, useTablePipeline } from '@guozhi5658/srp-table'
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
+
+// srp-table ships light-theme defaults; every color maps onto the host theme tokens instead.
+const TABLE_THEME = {
+  '--color': 'var(--dsw-alias-label-primary)',
+  '--bgcolor': 'var(--dsw-alias-bg-base)',
+  '--hover-bgcolor': 'var(--dsw-alias-bg-layer-1)',
+  '--highlight-bgcolor': 'var(--dsw-alias-bg-layer-2)',
+  '--header-color': 'var(--dsw-alias-label-primary)',
+  '--header-bgcolor': 'var(--dsw-alias-bg-layer-2)',
+  '--header-hover-bgcolor': 'var(--dsw-alias-bg-layer-2)',
+  '--header-highlight-bgcolor': 'var(--dsw-alias-bg-layer-2)',
+  '--border-color': 'var(--dsw-alias-border-l1)',
+  '--cell-border-vertical': 'none',
+  '--header-cell-border-vertical': 'none',
+  '--row-height': '26px',
+  '--header-row-height': '28px',
+  '--cell-padding': '4px 10px',
+  '--font-size': '12px',
+  '--line-height': '18px',
+}
+const RESIZE_HANDLE = 'color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent)'
 
 function readStoredNumber(key, fallback, min, max) {
   try {
@@ -42,7 +64,7 @@ function parseRedisKeyspace(info) {
 export function factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useCallback, useRef } = React
+    const { useState, useEffect, useCallback, useMemo, useRef } = React
 
     const NS = 'db-browser'
     const PANEL_ID = 'database'
@@ -166,7 +188,6 @@ export function factory(require) {
       'routine.onlyProcedure': '只有独立存储过程（procedure）支持在此执行',
       'routine.loading': '加载中…',
       'grid.region': '结果表格（聚焦后可用方向键滚动）',
-      'grid.colWidth': '拖动调整列宽',
       'grid.null': 'NULL',
       'cols.name': '列名',
       'cols.type': '类型',
@@ -188,7 +209,6 @@ export function factory(require) {
       'form.aclOptional': '（ACL，可选）',
     }
     const en = {
-      'grid.colWidth': 'Drag to resize the column',
       'panel': 'Database',
       'loadMore': 'Load more',
       'header.subtitle': 'Connect, browse, and query databases',
@@ -474,30 +494,15 @@ export function factory(require) {
 
     const GRID_ROW_H = 27
     function VirtualGrid({ columns, rows, wide, label, t }) {
-      const { ref, range, onScroll } = useWindowed(rows.length, GRID_ROW_H)
-      const { widths, startResize, hasWidth } = useColumnWidths()
-      const topH = range.start * GRID_ROW_H
-      const bottomH = Math.max(0, (rows.length - range.end) * GRID_ROW_H)
-      return h('div', { className: 'dbb-grid-scroll' + (wide ? ' dbb-grid-scroll-wide' : ''), ref, onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'data grid' },
-        h('table', { className: 'dbb-grid' + (wide ? ' dbb-grid-wide' : ''), style: hasWidth ? { tableLayout: 'fixed' } : undefined },
-          resizeColGroup(columns, widths),
-          h('thead', null, h('tr', null, columns.map((c, i) => h('th', { key: i, className: 'dbb-th' },
-            String(c),
-            h('span', { className: 'dbb-col-resizer', onPointerDown: startResize(i), title: t ? t('grid.colWidth') : 'resize' }))))),
-          h('tbody', null,
-            topH > 0 ? h('tr', { key: 'top', className: 'dbb-spacer' }, h('td', { colSpan: columns.length, style: { height: topH, padding: 0, border: 'none' } })) : null,
-            rows.slice(range.start, range.end).map((row, ri) =>
-              h('tr', { key: range.start + ri }, columns.map((_, ci) => {
-                const cell = Array.isArray(row) ? row[ci] : row?.[columns[ci]]
-                if (cell === null || cell === undefined) return h('td', { key: ci, className: 'dbb-null' }, t ? t('grid.null') : 'NULL')
-                const text = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
-                return h('td', { key: ci, title: text }, text)
-              })),
-            ),
-            bottomH > 0 ? h('tr', { key: 'bottom', className: 'dbb-spacer' }, h('td', { colSpan: columns.length, style: { height: bottomH, padding: 0, border: 'none' } })) : null,
-          ),
-        ),
-      )
+      const gridColumns = useMemo(() => columns.map((column, index) => ({
+        name: String(column),
+        value: (row) => cellText(row, column, index) ?? t('grid.null'),
+        cellProps: (row) => {
+          const text = cellText(row, column, index)
+          return text === null ? { className: 'dbb-null' } : { title: text }
+        },
+      })), [columns, t])
+      return h(DataTable, { columns: gridColumns, rows, wide, label, empty: t('result.empty') })
     }
 
     function ConnectionForm({ initial, defaults, onClose, onSaved, onDelete, onSaveUncertain, t }) {
@@ -779,35 +784,39 @@ export function factory(require) {
         columns
           ? h('div', { className: 'dbb-section' },
               h('div', { className: 'dbb-section-title' }, t('table.columns')),
-              h(ResizableTable, {
-                columns: ['', t('cols.name'), t('cols.type'), t('cols.null'), t('cols.key'), t('cols.default'), t('cols.extra')],
-                rows: columns.map((c, i) => [
-                  { className: 'dbb-muted', content: i + 1 },
-                  { content: c.name },
-                  { content: c.type },
-                  { content: c.nullable ? t('cols.yes') : t('cols.no') },
-                  { content: c.key ?? '' },
-                  { content: c.default === null || c.default === undefined ? '' : String(c.default) },
-                  { content: c.extra ?? '' },
-                ]),
+              h(DataTable, {
+                className: 'dbb-cols',
+                columns: [
+                  { name: '', width: 48, value: (_, i) => i + 1, cellProps: () => ({ className: 'dbb-muted' }) },
+                  { name: t('cols.name'), value: (c) => c.name },
+                  { name: t('cols.type'), value: (c) => c.type },
+                  { name: t('cols.null'), width: 80, value: (c) => (c.nullable ? t('cols.yes') : t('cols.no')) },
+                  { name: t('cols.key'), width: 80, value: (c) => c.key ?? '' },
+                  { name: t('cols.default'), value: (c) => (c.default === null || c.default === undefined ? '' : String(c.default)) },
+                  { name: t('cols.extra'), value: (c) => c.extra ?? '' },
+                ],
+                rows: columns,
+                rowKey: 'name',
                 label: t('table.columns'),
-                t,
+                empty: t('result.empty'),
               }),
             )
           : (error ? null : h('div', { className: 'dbb-muted' }, t('tree.loading'))),
         indexes && indexes.length > 0
           ? h('div', { className: 'dbb-section' },
               h('div', { className: 'dbb-section-title' }, t('table.indexes')),
-              h(ResizableTable, {
-                columns: [t('cols.name'), t('idx.columns'), t('idx.unique'), t('cols.type')],
-                rows: indexes.map((idx) => [
-                  { content: idx.name },
-                  { content: idx.columns.join(', '), title: idx.columns.join(', ') },
-                  { content: idx.unique ? t('cols.yes') : t('cols.no') },
-                  { content: idx.type ?? '' },
-                ]),
+              h(DataTable, {
+                className: 'dbb-cols',
+                columns: [
+                  { name: t('cols.name'), value: (idx) => idx.name },
+                  { name: t('idx.columns'), width: 240, value: (idx) => idx.columns.join(', '), cellProps: (idx) => ({ title: idx.columns.join(', ') }) },
+                  { name: t('idx.unique'), width: 80, value: (idx) => (idx.unique ? t('cols.yes') : t('cols.no')) },
+                  { name: t('cols.type'), value: (idx) => idx.type ?? '' },
+                ],
+                rows: indexes,
+                rowKey: 'name',
                 label: t('table.indexes'),
-                t,
+                empty: t('result.empty'),
               }),
             )
           : null,
@@ -1013,21 +1022,44 @@ export function factory(require) {
       if (info.type === 'string') {
         body = h(StringValue, { text: info.value ?? '', t })
       } else if (info.type === 'hash') {
-        const entries = Object.entries(info.value ?? {})
-        body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('thead', null, h('tr', null, [h('th', null, t('redis.kv.field')), h('th', null, t('redis.kv.value'))])),
-          h('tbody', null, entries.map(([k, v]) => h('tr', { key: k }, h('td', null, k), h('td', { title: String(v) }, String(v)))))))
+        body = h(DataTable, {
+          columns: [
+            { name: t('redis.kv.field'), width: 220, value: ([k]) => k },
+            { name: t('redis.kv.value'), width: 360, value: ([, v]) => String(v), cellProps: ([, v]) => ({ title: String(v) }) },
+          ],
+          rows: Object.entries(info.value ?? {}),
+          rowKey: ([k]) => k,
+          label: t('redis.type'),
+          empty: t('result.empty'),
+        })
       } else if (info.type === 'list') {
-        body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('thead', null, h('tr', null, [h('th', null, '#'), h('th', null, t('redis.kv.value'))])),
-          h('tbody', null, (info.value ?? []).map((v, i) => h('tr', { key: i }, h('td', { className: 'dbb-muted' }, i), h('td', { title: String(v) }, String(v)))))))
+        body = h(DataTable, {
+          columns: [
+            { name: '#', width: 64, value: (_, i) => i, cellProps: () => ({ className: 'dbb-muted' }) },
+            { name: t('redis.kv.value'), width: 360, value: (v) => String(v), cellProps: (v) => ({ title: String(v) }) },
+          ],
+          rows: info.value ?? [],
+          label: t('redis.type'),
+          empty: t('result.empty'),
+        })
       } else if (info.type === 'set') {
-        body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('tbody', null, (info.value ?? []).map((v, i) => h('tr', { key: i }, h('td', { title: String(v) }, String(v)))))))
+        body = h(DataTable, {
+          columns: [{ name: t('redis.kv.value'), width: 360, value: (v) => String(v), cellProps: (v) => ({ title: String(v) }) }],
+          rows: info.value ?? [],
+          hasHeader: false,
+          label: t('redis.type'),
+          empty: t('result.empty'),
+        })
       } else if (info.type === 'zset') {
-        body = h('div', { className: 'dbb-grid-scroll' }, h('table', { className: 'dbb-grid' },
-          h('thead', null, h('tr', null, [h('th', null, t('redis.kv.member')), h('th', null, t('redis.kv.score'))])),
-          h('tbody', null, (info.value ?? []).map((e2, i) => h('tr', { key: i }, h('td', null, String(e2.member)), h('td', null, String(e2.score)))))))
+        body = h(DataTable, {
+          columns: [
+            { name: t('redis.kv.member'), width: 260, value: (e2) => String(e2.member) },
+            { name: t('redis.kv.score'), width: 140, value: (e2) => String(e2.score) },
+          ],
+          rows: info.value ?? [],
+          label: t('redis.type'),
+          empty: t('result.empty'),
+        })
       } else {
         body = h('pre', { className: 'dbb-pre' }, JSON.stringify(info.value, null, 2))
       }
@@ -1035,72 +1067,37 @@ export function factory(require) {
     }
 
     const KEY_ROW_H = 25
-    /** Shared column-resize wiring: drag the right edge of a header cell. */
-    function useColumnWidths() {
-      const [widths, setWidths] = useState({})
-      const stopRef = useRef(null)
-      // The drag writes <col> widths straight to the DOM and commits once on release:
-      // a React render per pointermove made the grid stutter while resizing.
-      const startResize = (index) => (event) => {
-        if (event.pointerType === 'mouse' && event.button !== 0) return
-        event.preventDefault()
-        event.stopPropagation()
-        const table = event.currentTarget.closest('table')
-        const cols = table.querySelectorAll('colgroup > col')
-        // Snapshot every column so switching to a fixed layout does not reflow the grid.
-        const latest = [...table.tHead.rows[0].cells].map((cell, i) => widths[i] ?? Math.round(cell.getBoundingClientRect().width))
-        table.style.tableLayout = 'fixed'
-        latest.forEach((w, i) => { cols[i].style.width = `${w}px` })
-        const startX = event.clientX
-        const startWidth = latest[index]
-        let frame = 0
-        const move = (e) => {
-          latest[index] = Math.round(Math.max(48, startWidth + e.clientX - startX))
-          if (!frame) frame = requestAnimationFrame(() => { frame = 0; cols[index].style.width = `${latest[index]}px` })
-        }
-        const teardown = () => {
-          cancelAnimationFrame(frame)
-          window.removeEventListener('pointermove', move)
-          window.removeEventListener('pointerup', finish)
-          window.removeEventListener('pointercancel', finish)
-          stopRef.current = null
-        }
-        const finish = () => {
-          teardown()
-          setWidths(Object.fromEntries(latest.map((w, i) => [i, w])))
-        }
-        stopRef.current = teardown
-        window.addEventListener('pointermove', move)
-        window.addEventListener('pointerup', finish)
-        window.addEventListener('pointercancel', finish)
-      }
-      useEffect(() => () => stopRef.current?.(), [])
-      return { widths, startResize, hasWidth: Object.keys(widths).length > 0 }
-    }
+    /**
+     * Every data table renders through srp-table: virtual rows, sticky header and resizable columns.
+     * columns: [{ name, width, value(row, index), cellProps(row) }]; a filler column takes the spare width.
+     * className picks the frame (height cap, borders) of the scroll container the table virtualizes against.
+     */
+    function DataTable({ columns, rows, rowKey, label, empty, className, wide = false, hasHeader = true }) {
+      const artColumns = useMemo(() => columns.map((col, i) => ({
+        code: `c${i}`,
+        name: col.name,
+        width: col.width ?? (wide ? 360 : 160),
+        getValue: col.value,
+        getCellProps: col.cellProps ? (_, row) => col.cellProps(row) : undefined,
+      })), [columns, wide])
+      const EmptyContent = useMemo(() => () => h('div', { className: 'dbb-muted' }, empty), [empty])
 
-    /** Always rendered so a drag can start before the table switches to a fixed layout. */
-    function resizeColGroup(columns, widths) {
-      return React.createElement('colgroup', null, columns.map((_, i) =>
-        React.createElement('col', { key: i, style: widths[i] ? { width: widths[i] + 'px' } : undefined })))
-    }
+      const pipeline = useTablePipeline()
+      pipeline.input({ dataSource: rows, columns: artColumns })
+      if (rowKey) pipeline.primaryKey(rowKey)
+      pipeline
+        .use(features.fillRemainingWidth())
+        .use(features.columnResize({ minSize: 48, handleHoverBackground: RESIZE_HANDLE, handleActiveBackground: RESIZE_HANDLE }))
 
-    /** Simple catalog table with draggable column widths. */
-    function ResizableTable({ columns, rows, label, t }) {
-      const { widths, startResize, hasWidth } = useColumnWidths()
-      return React.createElement('div', { className: 'dbb-grid-scroll dbb-cols', tabIndex: 0, role: 'region', 'aria-label': label },
-        React.createElement('table', { className: 'dbb-grid', style: hasWidth ? { tableLayout: 'fixed' } : undefined },
-          resizeColGroup(columns, widths),
-          React.createElement('thead', null, React.createElement('tr', null, columns.map((title, i) =>
-            React.createElement('th', { key: i, className: 'dbb-th' },
-              String(title),
-              React.createElement('span', { className: 'dbb-col-resizer', onPointerDown: startResize(i), title: t ? t('grid.colWidth') : 'resize' }))))),
-          React.createElement('tbody', null, rows.map((cells, ri) =>
-            React.createElement('tr', { key: ri }, cells.map((cell, ci) => {
-              const descriptor = cell && typeof cell === 'object' && 'content' in cell ? cell : { content: cell }
-              return React.createElement('td', { key: ci, className: descriptor.className, title: descriptor.title }, descriptor.content)
-            })))),
-        ),
-      )
+      return h('div', { className: `dbb-grid-scroll${wide ? ' dbb-grid-scroll-wide' : ''}${className ? ` ${className}` : ''}`, tabIndex: 0, role: 'region', 'aria-label': label },
+        h(BaseTable, {
+          ...pipeline.getProps(),
+          hasHeader,
+          style: TABLE_THEME,
+          estimatedRowHeight: GRID_ROW_H,
+          emptyCellHeight: 40,
+          components: { EmptyContent },
+        }))
     }
 
     function VirtualKeyList({ keys, selected, openKey }) {
@@ -1317,17 +1314,13 @@ export function factory(require) {
 .dbb-sql-editor{min-height:110px;resize:vertical;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
 .dbb-sql-editor:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .dbb-grid-wrap{display:flex;flex-direction:column;gap:4px;min-height:0}
-.dbb-grid-scroll{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;max-height:46vh;resize:vertical;min-height:96px}
-.dbb-grid{border-collapse:collapse;width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-.dbb-grid th{position:sticky;top:0;background:var(--dsw-alias-bg-layer-2);text-align:left;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);white-space:nowrap}
-.dbb-th{position:relative}
-.dbb-col-resizer{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:2}
-.dbb-col-resizer:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent)}
-.dbb-grid td{padding:4px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dbb-grid-wide td{white-space:pre-wrap;max-width:none;vertical-align:top}
+/* Data tables (srp-table): this div is the scroll container the table virtualizes against. */
+.dbb-grid-scroll{overflow-x:hidden;overflow-y:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;max-height:46vh;resize:vertical;min-height:96px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.dbb-grid-scroll .art-table-header th{font-weight:600;white-space:nowrap}
+.dbb-grid-scroll td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbb-grid-scroll-wide td{white-space:pre-wrap;vertical-align:top}
 .dbb-grid-scroll-wide{max-height:none}
 .dbb-plan{max-height:40vh}
-.dbb-grid tr:hover td{background:var(--dsw-alias-bg-layer-1)}
 .dbb-null{color:var(--dsw-alias-label-secondary);font-style:italic}
 .dbb-result-meta{color:var(--dsw-alias-label-secondary);font-size:12px}
 .dbb-page{display:inline-flex;align-items:center;gap:6px}
@@ -1335,8 +1328,6 @@ export function factory(require) {
 .dbb-page-size{display:inline-flex;align-items:center;gap:4px;font-size:12px}
 .dbb-select-inline{width:auto;padding:2px 4px}
 .dbb-section-title-row{display:flex;align-items:center;gap:8px}
-.dbb-spacer td{height:0}
-.dbb-grid td{height:26px}
 .dbb-cols{max-height:30vh;margin-bottom:10px}
 .dbb-tableview{padding:8px 12px;overflow:auto}
 .dbb-tableview-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}

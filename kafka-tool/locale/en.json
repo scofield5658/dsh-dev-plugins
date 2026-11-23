@@ -90,7 +90,6 @@
     "stream.stop": "Stop",
     "stream.subscribe": "Subscribe",
     "stream.timestamp.invalid": "Invalid timestamp",
-    "table.colWidth": "Drag to resize the column",
     "topics.begin": "Begin",
     "topics.col.name": "Topic",
     "topics.col.partitions": "Partitions",

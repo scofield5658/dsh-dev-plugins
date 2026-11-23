@@ -43,6 +43,10 @@ function fakeReact() {
     memo: component => component,
     Children: { only: c => c, toArray: c => (Array.isArray(c) ? c : [c]) },
     isValidElement: value => Boolean(value && value.__element),
+    // srp-table defines class and styled components while the bundle initializes.
+    forwardRef: render => render,
+    Component: class {},
+    PureComponent: class {},
     Fragment: Symbol.for('test.fragment'),
   }
 }
@@ -185,6 +189,10 @@ function fakeReactRuntime() {
     memo: component => component,
     Children: { only: c => c, toArray: c => (Array.isArray(c) ? c : [c]) },
     isValidElement: value => Boolean(value && value.__element),
+    // srp-table defines class and styled components while the bundle initializes.
+    forwardRef: render => render,
+    Component: class {},
+    PureComponent: class {},
   }
 }
 

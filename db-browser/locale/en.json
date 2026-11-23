@@ -61,7 +61,6 @@
     "form.titleNew": "New connection",
     "form.type": "Type",
     "form.user": "User",
-    "grid.colWidth": "Drag to resize the column",
     "grid.null": "NULL",
     "grid.region": "Data grid (scroll with arrow keys when focused)",
     "header.subtitle": "Connect, browse, and query databases",

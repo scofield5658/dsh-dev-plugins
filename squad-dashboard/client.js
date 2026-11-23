@@ -395,7 +395,7 @@ window.__ModuleLoader__.load({
 
     /** Squad configuration view: manage the member roster and one model
      *  route per member, then save the shared config file Leaders can read. */
-    /** Drag the label-column separator; the CSS variable is written directly while dragging. */
+    /** Drag any row's label grip; the CSS variable is written directly while dragging. */
     function useDraggableWidth(initial, min, max, storageKey) {
       const read = () => {
         try {
@@ -412,6 +412,7 @@ window.__ModuleLoader__.load({
         if (event.pointerType === 'mouse' && event.button !== 0) return
         const root = event.currentTarget.closest('.sd-config')
         event.preventDefault()
+        root.classList.add('sd-label-resizing')
         const startX = event.clientX
         const startWidth = width
         let latest = startWidth
@@ -427,6 +428,7 @@ window.__ModuleLoader__.load({
         }
         const teardown = () => {
           cancelAnimationFrame(frame)
+          root.classList.remove('sd-label-resizing')
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', onUp)
           window.removeEventListener('pointercancel', onUp)
@@ -687,12 +689,10 @@ window.__ModuleLoader__.load({
       )
       const kinds = Object.entries(draft.members ?? {})
 
-      // One separator per block: it sits on the label column edge and never covers the hero.
-      const labelResizer = () => h('div', {
-        className: 'sd-label-resizer',
-        role: 'separator',
-        'aria-orientation': 'vertical',
-        'aria-label': t('config.labelWidthHint'),
+      // Each labelled row carries its own grip inside the label/control gap, so no handle crosses other content.
+      const labelGrip = () => h('span', {
+        className: 'sd-label-grip',
+        'aria-hidden': 'true',
         title: t('config.labelWidthHint'),
         onPointerDown: startLabelResize,
         onDoubleClick: resetLabelWidth,
@@ -706,7 +706,6 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('section', { className: 'sd-config-block', 'aria-labelledby': 'sd-block-local' },
-          labelResizer(),
           h('div', { className: 'sd-block-head' },
             h('h3', { className: 'sd-block-title', id: 'sd-block-local' }, t('config.local')),
             h('p', { className: 'sd-block-hint' }, t('config.localHint')),
@@ -715,6 +714,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'sd-config-row sd-config-default' },
               h('label', { className: 'sd-config-label', htmlFor: 'sd-config-default' }, t('config.defaults')),
               select(routeValue(draft.defaults), setDefault, 'sd-config-default'),
+              labelGrip(),
             ),
             h('div', { className: 'sd-config-row' },
               h('label', { className: 'sd-config-label', htmlFor: 'sd-config-concurrency' }, t('config.concurrency')),
@@ -727,6 +727,7 @@ window.__ModuleLoader__.load({
                 value: draft.limits.maxConcurrentPerRoute ?? '',
                 onChange: (event) => setConcurrency(event.target.value),
               }),
+              labelGrip(),
             ),
             kinds.map(([kind, roster]) =>
               h('section', { key: kind, className: 'sd-config-squad' },
@@ -738,6 +739,7 @@ window.__ModuleLoader__.load({
                         return h('li', { key: name, className: 'sd-config-row sd-config-member' },
                           h('label', { className: 'sd-config-label', htmlFor: id, title: name }, name),
                           select(routeValue(draft.squads[kind]?.[name]), (value) => setMember(kind, name, value), id),
+                          labelGrip(),
                         )
                       }))
                   : h('p', { className: 'sd-block-hint' }, t('config.membersManaged')),
@@ -753,7 +755,6 @@ window.__ModuleLoader__.load({
         ),
         remoteDraft
           ? h('section', { className: 'sd-config-block sd-config-block-remote', 'aria-labelledby': 'sd-block-remote' },
-              labelResizer(),
               h('div', { className: 'sd-block-head' },
                 h('h3', { className: 'sd-block-title', id: 'sd-block-remote' }, t('config.remote')),
                 h('p', { className: 'sd-block-hint' }, t('config.remote.hint')),
@@ -768,6 +769,7 @@ window.__ModuleLoader__.load({
                   value: remoteDraft.url,
                   onChange: (event) => setRemoteDraft({ ...remoteDraft, url: event.target.value }),
                 }),
+                labelGrip(),
               ),
               h('div', { className: 'sd-config-row' },
                 h('label', { className: 'sd-config-label', htmlFor: 'sd-remote-token' }, t('config.remote.token')),
@@ -780,6 +782,7 @@ window.__ModuleLoader__.load({
                   value: remoteDraft.token,
                   onChange: (event) => setRemoteDraft({ ...remoteDraft, token: event.target.value }),
                 }),
+                labelGrip(),
               ),
               h('div', { className: 'sd-config-row' },
                 h('label', { className: 'sd-config-label', htmlFor: 'sd-remote-ws' }, t('config.remote.workspace')),
@@ -796,6 +799,7 @@ window.__ModuleLoader__.load({
                   workspaces.map((workspace) => h('option', { key: workspace.id, value: workspace.id },
                     workspace.slug ? `${workspace.name}（${workspace.slug}）` : workspace.name)),
                 ),
+                labelGrip(),
               ),
               workspacesError
                 ? h('p', { className: 'sd-config-error', role: 'alert' }, t('config.remote.wsError', { message: workspacesError }))
@@ -1289,24 +1293,20 @@ window.__ModuleLoader__.load({
 .sd-tab:hover { background: var(--dsw-alias-bg-base, Canvas); }
 .sd-tab-active { background: var(--dsw-alias-bg-base, Canvas); color: var(--dsw-alias-label-primary, CanvasText); font-weight: 600; }
 /* squad configuration */
-.sd-config { --sd-label-w: 112px; position: relative; display: flex; flex-direction: column; gap: 14px; }
-/* Drag the label column edge; it sits above the blocks so one handle serves every row. */
-.sd-label-resizer {
-  position: absolute; top: 0; bottom: 0; z-index: 2;
-  left: calc(14px + var(--sd-label-w)); margin-left: -4px; width: 9px;
-  cursor: col-resize; touch-action: none; border-radius: 4px;
+.sd-config { --sd-label-w: 112px; display: flex; flex-direction: column; gap: 14px; }
+/* Every labelled row has a grip filling its 8px label/control gap; hovering one previews the whole column edge. */
+.sd-label-grip {
+  position: absolute; top: 0; bottom: 0; left: var(--sd-label-w); width: 8px;
+  cursor: col-resize; touch-action: none;
 }
-.sd-label-resizer::after {
-  content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
-  background: var(--dsw-alias-border-l1, ButtonBorder); opacity: 0; transition: opacity .12s;
+.sd-label-grip::after {
+  content: ''; position: absolute; top: 2px; bottom: 2px; left: 3px; width: 2px; border-radius: 1px;
+  background: var(--dsw-alias-brand-primary, Highlight); opacity: 0; transition: opacity .12s;
 }
-.sd-config-block:hover .sd-label-resizer::after { opacity: .8; }
-.sd-label-resizer:hover, .sd-label-resizer:active {
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary, Highlight) 35%, transparent);
-}
-.sd-label-resizer:hover::after, .sd-label-resizer:active::after { opacity: 0; }
+.sd-config:has(.sd-label-grip:hover) .sd-label-grip::after { opacity: .4; }
+.sd-label-grip:hover::after, .sd-label-resizing .sd-label-grip::after { opacity: 1; }
+.sd-label-resizing, .sd-label-resizing * { cursor: col-resize; user-select: none; }
 .sd-config-block {
-  position: relative;
   display: flex; flex-direction: column; gap: 10px;
   padding: 12px 14px;
   border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
@@ -1317,7 +1317,7 @@ window.__ModuleLoader__.load({
 .sd-block-head { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder); }
 .sd-block-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary, CanvasText); }
 .sd-block-hint { margin: 0; font-size: 11px; color: var(--dsw-alias-label-tertiary, GrayText); }
-.sd-config-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sd-config-row { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sd-config-squad { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px solid var(--dsw-alias-border-l1, ButtonBorder); }
 .sd-config-list {
   list-style: none; margin: 0; padding: 0;
@@ -1330,7 +1330,7 @@ window.__ModuleLoader__.load({
 }
 .sd-config-row.sd-config-member {
   display: grid;
-  grid-template-columns: minmax(72px, clamp(72px, var(--sd-label-w, 112px), 150px)) minmax(160px, 1fr);
+  grid-template-columns: var(--sd-label-w) minmax(0, 1fr);
   gap: 8px;
 }
 .sd-config-member .sd-config-label {

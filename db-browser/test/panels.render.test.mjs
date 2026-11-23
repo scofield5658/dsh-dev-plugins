@@ -79,3 +79,21 @@ test('the sidebar renders a real panel group with our classes inside the panels'
   const separator = html.indexOf('data-separator')
   assert.ok(aside < separator && separator < main, 'order is tree, separator, main')
 })
+
+test('every data table renders through the one srp-table DataTable', () => {
+  const src = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  assert.match(src, /from '@guozhi5658\/srp-table'/)
+  // SQL results, table columns, table indexes, and the four Redis value shapes
+  assert.equal((src.match(/h\(DataTable, \{/g) || []).length, 7, 'all seven tables render through DataTable')
+  assert.match(src, /\.use\(features\.fillRemainingWidth\(\)\)\s*\.use\(features\.columnResize\(/,
+    'the filler column is added before columnResize so it gets no handle')
+  // Theme and language stay with the host: colors come from host tokens, the empty state is translated.
+  assert.match(src, /'--bgcolor': 'var\(--dsw-alias-bg-base\)'/)
+  assert.match(src, /components: \{ EmptyContent \}/)
+  assert.doesNotMatch(src, /h\('table', \{ className: 'dbb-grid'/, 'no hand-rolled grid tables remain')
+})
+
+test('the bundled table never loads a remote empty-state image', () => {
+  const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(src, /img\.alicdn\.com\/tfs/)
+})

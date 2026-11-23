@@ -1,4 +1,25 @@
+import { BaseTable, features, useTablePipeline } from '@guozhi5658/srp-table'
 import { Group, Panel, Separator } from 'react-resizable-panels'
+
+// srp-table ships light-theme defaults; every color maps onto the host theme tokens instead.
+const TABLE_THEME = {
+  '--color': 'var(--dsw-alias-label-primary)',
+  '--bgcolor': 'var(--dsw-alias-bg-base)',
+  '--hover-bgcolor': 'var(--dsw-alias-interactive-bg-hover)',
+  '--highlight-bgcolor': 'var(--dsw-alias-interactive-bg-active)',
+  '--header-color': 'var(--dsw-alias-label-tertiary)',
+  '--header-bgcolor': 'var(--dsw-alias-bg-base)',
+  '--header-hover-bgcolor': 'var(--dsw-alias-interactive-bg-hover)',
+  '--header-highlight-bgcolor': 'var(--dsw-alias-interactive-bg-active)',
+  '--border-color': 'var(--dsw-alias-border-l3)',
+  '--cell-border-vertical': 'none',
+  '--header-cell-border-vertical': 'none',
+  '--header-row-height': '28px',
+  '--cell-padding': '0 10px',
+  '--font-size': '12px',
+  '--line-height': '20px',
+}
+const RESIZE_HANDLE = 'color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent)'
 
 export function factory(require) {
     const React = require('react')
@@ -110,7 +131,6 @@ export function factory(require) {
       'refresh.seconds': 's',
       'refresh.last': 'Last updated {time}',
       'detail.title': 'Message detail',
-      'table.colWidth': 'Drag to resize the column',
       'split.detailResize': 'Drag to resize the detail pane, double-click to reset',
       'detail.close': 'Close',
       'detail.meta': 'Metadata',
@@ -213,7 +233,6 @@ export function factory(require) {
       'refresh.seconds': '秒',
       'refresh.last': '最后更新 {time}',
       'detail.title': '消息详情',
-      'table.colWidth': '拖动调整列宽',
       'split.detailResize': '拖动调整详情高度，双击恢复默认',
       'detail.close': '关闭',
       'detail.meta': '元数据',
@@ -512,88 +531,51 @@ export function factory(require) {
                 rows.slice(win.start, win.end).map(renderRow))))
     }
 
-    /** Shared table column-resize wiring: drag writes <col> widths, release commits state. */
-    function useColumnWidths() {
-      const [widths, setWidths] = useState({})
-      const stopRef = useRef(null)
-      const startResize = index => event => {
-        if (event.pointerType === 'mouse' && event.button !== 0) return
-        event.preventDefault()
-        event.stopPropagation()
-        const table = event.currentTarget.closest('table')
-        const cols = table.querySelectorAll('colgroup > col')
-        // Snapshot every column so switching to a fixed layout does not reflow the table.
-        const latest = [...table.tHead.rows[0].cells].map((cell, i) => widths[i] ?? Math.round(cell.getBoundingClientRect().width))
-        table.style.tableLayout = 'fixed'
-        latest.forEach((w, i) => { cols[i].style.width = `${w}px` })
-        const startX = event.clientX
-        const startWidth = latest[index]
-        let frame = 0
-        const move = e => {
-          latest[index] = Math.round(Math.max(48, startWidth + e.clientX - startX))
-          if (!frame) frame = requestAnimationFrame(() => { frame = 0; cols[index].style.width = `${latest[index]}px` })
-        }
-        const teardown = () => {
-          cancelAnimationFrame(frame)
-          window.removeEventListener('pointermove', move)
-          window.removeEventListener('pointerup', finish)
-          window.removeEventListener('pointercancel', finish)
-          stopRef.current = null
-        }
-        const finish = () => {
-          teardown()
-          setWidths(Object.fromEntries(latest.map((w, i) => [i, w])))
-        }
-        stopRef.current = teardown
-        window.addEventListener('pointermove', move)
-        window.addEventListener('pointerup', finish)
-        window.addEventListener('pointercancel', finish)
+    /**
+     * Every data list renders through srp-table: virtual rows, sticky header and resizable columns.
+     * columns: [{ key, name, width, align, className, value(row), title(row) }]; a filler column takes the spare width.
+     * onActivate(row) makes rows focusable and opens them with a click, Enter or Space; selected(row) highlights a row.
+     */
+    function DataTable({ columns, rows, rowKey, empty, label, t, onActivate, selected, rowHeight = 28 }) {
+      const artColumns = useMemo(() => columns.map(col => ({
+        code: col.key,
+        name: col.name,
+        width: col.width,
+        align: col.align,
+        getValue: col.value,
+        getCellProps: (_, row) => ({ className: col.className, title: col.title?.(row) }),
+      })), [columns])
+      const EmptyContent = useMemo(() => () => h('div', { className: 'kx-data-empty' }, empty), [empty])
+
+      const pipeline = useTablePipeline()
+      pipeline.input({ dataSource: rows, columns: artColumns })
+        .primaryKey(rowKey)
+        .use(features.fillRemainingWidth())
+        .use(features.columnResize({ minSize: 48, handleHoverBackground: RESIZE_HANDLE, handleActiveBackground: RESIZE_HANDLE }))
+      if (onActivate || selected) {
+        pipeline.appendRowPropsGetter(row => ({
+          className: selected?.(row) ? 'highlight' : undefined,
+          tabIndex: onActivate ? 0 : undefined,
+          onClick: onActivate ? () => onActivate(row) : undefined,
+          onKeyDown: onActivate
+            ? event => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                onActivate(row)
+              }
+            : undefined,
+        }))
       }
-      useEffect(() => () => stopRef.current?.(), [])
-      return { widths, startResize, hasWidth: Object.keys(widths).length > 0 }
-    }
 
-    /** Always rendered so a drag can start before the table switches to a fixed layout. */
-    function ColumnGroup({ count, widths }) {
-      return h('colgroup', null, Array.from({ length: count }, (_, i) =>
-        h('col', { key: i, style: widths[i] ? { width: `${widths[i]}px` } : undefined })))
-    }
-
-    /** Append one drag handle to every header cell. */
-    function withColumnResizers(head, startResize, t) {
-      const cells = React.Children.toArray(head.props.children)
-      return React.cloneElement(head, null, cells.map((cell, i) => React.cloneElement(cell, { key: i }, [
-        cell.props.children,
-        h('span', {
-          key: 'resize',
-          className: 'kx-col-resizer',
-          'aria-hidden': true,
-          title: t('table.colWidth'),
-          onPointerDown: startResize(i),
-        }),
-      ])))
-    }
-
-    // Detail stays outside this table. A variable-height row would break the window math.
-    function VirtualTable(props) {
-      const { head, rows, renderRow, empty, colSpan, rowH = 28, label, t } = props
-      const { widths, startResize, hasWidth } = useColumnWidths()
-      const columnCount = React.Children.count(head.props.children)
-      const win = useVirtualWindow(rows.length, rowH)
-      const spacer = height => h('tr', { style: { height }, 'aria-hidden': true },
-        h('td', { colSpan, style: { padding: 0, border: 'none' } }))
-      return h('div', { ref: win.ref, className: 'kx-virt', onScroll: win.onScroll, tabIndex: 0, role: 'region', 'aria-label': label ?? 'table' },
-        h('table', { className: 'kx-table', style: hasWidth ? { tableLayout: 'fixed' } : undefined },
-          h(ColumnGroup, { count: columnCount, widths }),
-          h('thead', null, withColumnResizers(head, startResize, t)),
-          h('tbody', null,
-            rows.length === 0
-              ? h('tr', null, h('td', { colSpan, className: 'kx-empty-cell' }, empty))
-              : [
-                  win.start > 0 ? spacer(win.start * rowH) : null,
-                  ...rows.slice(win.start, win.end).map((row, i) => renderRow(row, win.start + i)),
-                  win.end < rows.length ? spacer((rows.length - win.end) * rowH) : null,
-                ])))
+      return h('div', { className: 'kx-data', tabIndex: 0, role: 'region', 'aria-label': label },
+        h(BaseTable, {
+          ...pipeline.getProps(),
+          className: onActivate ? 'kx-data-table kx-data-rows' : 'kx-data-table',
+          style: { ...TABLE_THEME, '--row-height': `${rowHeight}px` },
+          estimatedRowHeight: rowHeight,
+          emptyCellHeight: 80,
+          components: { EmptyContent },
+        }))
     }
 
     function TopicPicker(props) {
@@ -1198,27 +1180,14 @@ export function factory(require) {
         })
       }, [messagesVersion, filters])
 
-      const renderMessageRow = useCallback(msg => {
-        const open = () => setDetail(msg)
-        return h('tr', {
-          key: messageKey(msg),
-          className: 'kx-row',
-          style: { height: ROW_H },
-          tabIndex: 0,
-          onClick: open,
-          onKeyDown: event => {
-            if (event.key !== 'Enter' && event.key !== ' ') return
-            event.preventDefault()
-            open()
-          },
-        },
-          h('td', { className: 'kx-cell kx-col-time', title: new Date(Number(msg.timestamp)).toLocaleString() }, fmtTime(msg.timestamp)),
-          h('td', { className: 'kx-cell kx-col-topic kx-ellipsis', title: msg.topic }, msg.topic),
-          h('td', { className: 'kx-cell kx-col-part' }, String(msg.partition)),
-          h('td', { className: 'kx-cell kx-col-offset' }, msg.offset),
-          h('td', { className: 'kx-cell kx-col-key kx-ellipsis', title: msg.keyPreview }, msg.keyPreview),
-          h('td', { className: 'kx-cell kx-col-size' }, fmtBytes(msg.valueSize)))
-      }, [])
+      const streamColumns = useMemo(() => [
+        { key: 'timestamp', name: t('stream.col.time'), width: 132, className: 'kx-col-time', value: msg => fmtTime(msg.timestamp), title: msg => new Date(Number(msg.timestamp)).toLocaleString() },
+        { key: 'topic', name: t('stream.col.topic'), width: 200, title: msg => msg.topic },
+        { key: 'partition', name: t('stream.col.partition'), width: 64, align: 'right', value: msg => String(msg.partition) },
+        { key: 'offset', name: t('stream.col.offset'), width: 110, align: 'right', className: 'kx-col-offset' },
+        { key: 'key', name: t('stream.col.key'), width: 200, className: 'kx-col-key', value: msg => msg.keyPreview, title: msg => msg.keyPreview },
+        { key: 'size', name: t('stream.col.size'), width: 80, align: 'right', className: 'kx-col-size', value: msg => fmtBytes(msg.valueSize) },
+      ], [t])
 
       const connBar = h('div', { className: 'kx-conn' },
         h('input', {
@@ -1379,18 +1348,12 @@ export function factory(require) {
         streamError ? h('div', { className: 'kx-error-bar' }, t('error.generic', { message: streamError })) : null,
         !conn
           ? h('div', { className: 'kx-empty' }, t('conn.required'))
-          : h(VirtualTable, {
-              head: h('tr', null,
-                h('th', { className: 'kx-cell kx-col-time' }, t('stream.col.time')),
-                h('th', { className: 'kx-cell kx-col-topic' }, t('stream.col.topic')),
-                h('th', { className: 'kx-cell kx-col-part' }, t('stream.col.partition')),
-                h('th', { className: 'kx-cell kx-col-offset' }, t('stream.col.offset')),
-                h('th', { className: 'kx-cell kx-col-key' }, t('stream.col.key')),
-                h('th', { className: 'kx-cell kx-col-size' }, t('stream.col.size'))),
+          : h(DataTable, {
+              columns: streamColumns,
               rows: filteredMessages,
-              colSpan: 6,
-              rowH: ROW_H,
-              renderRow: renderMessageRow,
+              rowKey: messageKey,
+              rowHeight: ROW_H,
+              onActivate: setDetail,
               t,
               label: t('stream.col.time'),
               empty: resuming && sub === null
@@ -1420,42 +1383,31 @@ export function factory(require) {
                     h(Btn, { onClick: loadTopics }, t('topics.reload')))
                 : h('div', { className: 'kx-empty' }, h(Spinner), t('common.loading')))
             : (() => {
-                const table = h(VirtualTable, {
+                const table = h(DataTable, {
                   t,
-                  head: h('tr', null,
-                    h('th', null, t('topics.col.name')),
-                    h('th', { className: 'kx-num' }, t('topics.col.partitions')),
-                    h('th', null, '')),
-                  rows: filteredTopics,
-                  colSpan: 3,
-                  empty: t('topics.empty'),
-                  label: t('topics.col.name'),
-                  renderRow: topic => h('tr', {
-                    key: topic.name,
-                    className: `kx-row-click${expandedTopic === topic.name ? ' kx-row-selected' : ''}`,
-                    tabIndex: 0,
-                    onClick: () => {
-                      const next = expandedTopic === topic.name ? null : topic.name
-                      setExpandedTopic(next)
-                      if (next !== null && topicOffsets[next] === undefined) refreshTopicOffsets(next)
-                    },
-                    onKeyDown: (event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return
-                      event.preventDefault()
-                      const next = expandedTopic === topic.name ? null : topic.name
-                      setExpandedTopic(next)
-                      if (next !== null && topicOffsets[next] === undefined) refreshTopicOffsets(next)
-                    },
-                  },
-                    h('td', { className: 'kx-ellipsis', title: topic.name }, topic.name),
-                    h('td', { className: 'kx-num' }, String(topic.partitionCount)),
-                    h('td', null,
-                      h(Btn, {
+                  columns: [
+                    { key: 'name', name: t('topics.col.name'), width: 280, title: topic => topic.name },
+                    { key: 'partitionCount', name: t('topics.col.partitions'), width: 90, align: 'right', value: topic => String(topic.partitionCount) },
+                    {
+                      key: 'subscribe', name: '', width: 110,
+                      value: topic => h(Btn, {
                         onClick: () => {
                           setSelectedTopics(prev => prev.includes(topic.name) ? prev : [...prev, topic.name])
                           setView('stream')
                         },
-                      }, t('topics.subscribe')))),
+                      }, t('topics.subscribe')),
+                    },
+                  ],
+                  rows: filteredTopics,
+                  rowKey: 'name',
+                  empty: t('topics.empty'),
+                  label: t('topics.col.name'),
+                  selected: topic => expandedTopic === topic.name,
+                  onActivate: topic => {
+                    const next = expandedTopic === topic.name ? null : topic.name
+                    setExpandedTopic(next)
+                    if (next !== null && topicOffsets[next] === undefined) refreshTopicOffsets(next)
+                  },
                 })
                 const detail = expandedTopic === null
                   ? null
@@ -1473,24 +1425,19 @@ export function factory(require) {
                           : !Array.isArray(offsets)
                             ? h('div', { className: 'kx-error' }, offsets.error)
                             : h('div', { className: 'kx-detail-body' },
-                                h(VirtualTable, {
+                                h(DataTable, {
                                   t,
                                   label: t('topics.part.col'),
                                   empty: t('common.null'),
-                                  colSpan: 5,
-                                  head: h('tr', null,
-                                    h('th', { className: 'kx-num' }, t('topics.part.col')),
-                                    h('th', { className: 'kx-num' }, t('topics.leader')),
-                                    h('th', { className: 'kx-num' }, t('topics.begin')),
-                                    h('th', { className: 'kx-num' }, t('topics.end')),
-                                    h('th', { className: 'kx-num' }, t('topics.col.size'))),
+                                  columns: [
+                                    { key: 'partition', name: t('topics.part.col'), width: 90, align: 'right', value: part => String(part.partition) },
+                                    { key: 'leader', name: t('topics.leader'), width: 90, align: 'right', value: part => String(topic?.partitions.find(one => one.partition === part.partition)?.leader ?? -1) },
+                                    { key: 'low', name: t('topics.begin'), width: 130, align: 'right' },
+                                    { key: 'high', name: t('topics.end'), width: 130, align: 'right' },
+                                    { key: 'size', name: t('topics.col.size'), width: 110, align: 'right' },
+                                  ],
                                   rows: offsets,
-                                  renderRow: part => h('tr', { key: part.partition },
-                                    h('td', { className: 'kx-num' }, String(part.partition)),
-                                    h('td', { className: 'kx-num' }, String(topic?.partitions.find(one => one.partition === part.partition)?.leader ?? -1)),
-                                    h('td', { className: 'kx-num' }, part.low),
-                                    h('td', { className: 'kx-num' }, part.high),
-                                    h('td', { className: 'kx-num' }, part.size)),
+                                  rowKey: part => String(part.partition),
                                 })))
                     })()
                 if (detail === null) return table
@@ -1517,38 +1464,24 @@ export function factory(require) {
                     h(Btn, { onClick: loadGroups }, t('groups.reload')))
                 : h('div', { className: 'kx-empty' }, h(Spinner), t('common.loading')))
             : (() => {
-                const table = h(VirtualTable, {
+                const table = h(DataTable, {
                   t,
-                  head: h('tr', null,
-                    h('th', null, t('groups.col.id')),
-                    h('th', null, t('groups.col.state')),
-                    h('th', { className: 'kx-num' }, t('groups.col.members')),
-                    h('th', null, t('groups.col.protocol'))),
+                  columns: [
+                    { key: 'groupId', name: t('groups.col.id'), width: 280, title: group => group.groupId },
+                    { key: 'state', name: t('groups.col.state'), width: 120 },
+                    { key: 'members', name: t('groups.col.members'), width: 90, align: 'right', value: group => String(group.members.length) },
+                    { key: 'protocol', name: t('groups.col.protocol'), width: 120, value: group => group.protocol || t('common.null') },
+                  ],
                   rows: filteredGroups,
-                  colSpan: 4,
+                  rowKey: 'groupId',
                   empty: t('groups.empty'),
                   label: t('groups.col.id'),
-                  renderRow: group => h('tr', {
-                    key: group.groupId,
-                    className: `kx-row-click${expandedGroup === group.groupId ? ' kx-row-selected' : ''}`,
-                    tabIndex: 0,
-                    onClick: () => {
-                      const next = expandedGroup === group.groupId ? null : group.groupId
-                      setExpandedGroup(next)
-                      if (next !== null && groupOffsets[next] === undefined) refreshGroupOffsets(next)
-                    },
-                    onKeyDown: (event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return
-                      event.preventDefault()
-                      const next = expandedGroup === group.groupId ? null : group.groupId
-                      setExpandedGroup(next)
-                      if (next !== null && groupOffsets[next] === undefined) refreshGroupOffsets(next)
-                    },
+                  selected: group => expandedGroup === group.groupId,
+                  onActivate: group => {
+                    const next = expandedGroup === group.groupId ? null : group.groupId
+                    setExpandedGroup(next)
+                    if (next !== null && groupOffsets[next] === undefined) refreshGroupOffsets(next)
                   },
-                    h('td', { className: 'kx-ellipsis', title: group.groupId }, group.groupId),
-                    h('td', null, group.state),
-                    h('td', { className: 'kx-num' }, String(group.members.length)),
-                    h('td', null, group.protocol || t('common.null'))),
                 })
                 const detail = expandedGroup === null
                   ? null
@@ -1565,24 +1498,19 @@ export function factory(require) {
                           : !Array.isArray(offsets)
                             ? h('div', { className: 'kx-error' }, offsets.error)
                             : h('div', { className: 'kx-detail-body' },
-                                h(VirtualTable, {
+                                h(DataTable, {
                                   t,
                                   label: t('groups.offsets.col.topic'),
                                   empty: t('common.null'),
-                                  colSpan: 5,
-                                  head: h('tr', null,
-                                    h('th', null, t('groups.offsets.col.topic')),
-                                    h('th', { className: 'kx-num' }, t('groups.offsets.col.partition')),
-                                    h('th', { className: 'kx-num' }, t('groups.offsets.col.committed')),
-                                    h('th', { className: 'kx-num' }, t('groups.offsets.col.end')),
-                                    h('th', { className: 'kx-num' }, t('groups.offsets.col.lag'))),
+                                  columns: [
+                                    { key: 'topic', name: t('groups.offsets.col.topic'), width: 220, value: ({ topic }) => topic.topic, title: ({ topic }) => topic.topic },
+                                    { key: 'partition', name: t('groups.offsets.col.partition'), width: 90, align: 'right', value: ({ part }) => String(part.partition) },
+                                    { key: 'committed', name: t('groups.offsets.col.committed'), width: 130, align: 'right', value: ({ part }) => part.offset },
+                                    { key: 'end', name: t('groups.offsets.col.end'), width: 130, align: 'right', value: ({ part }) => part.high ?? t('common.null') },
+                                    { key: 'lag', name: t('groups.offsets.col.lag'), width: 100, align: 'right', value: ({ part }) => part.lag ?? t('common.null') },
+                                  ],
                                   rows: offsets.flatMap(topic => topic.partitions.map(part => ({ topic, part }))),
-                                  renderRow: ({ topic, part }) => h('tr', { key: `${topic.topic}:${String(part.partition)}` },
-                                    h('td', { className: 'kx-ellipsis', title: topic.topic }, topic.topic),
-                                    h('td', { className: 'kx-num' }, String(part.partition)),
-                                    h('td', { className: 'kx-num' }, part.offset),
-                                    h('td', { className: 'kx-num' }, part.high ?? t('common.null')),
-                                    h('td', { className: 'kx-num' }, part.lag ?? t('common.null'))),
+                                  rowKey: ({ topic, part }) => `${topic.topic}:${String(part.partition)}`,
                                 })))
                     })()
                 if (detail === null) return table
@@ -1638,20 +1566,15 @@ export function factory(require) {
 .kx-error { color: var(--dsw-alias-state-error-primary); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kx-error-bar { padding: 4px 10px; color: var(--dsw-alias-state-error-primary); border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .kx-warn-bar { padding: 4px 10px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-l2); border-bottom: 1px solid var(--dsw-alias-border-l3); }
-/* Data tables: header cells carry a drag handle, rows are real table rows. */
-.kx-table tr.kx-row { cursor: pointer; }
-.kx-table tr.kx-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.kx-table tr.kx-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
-.kx-table th.kx-cell { padding: 0 10px; height: 26px; }
-.kx-table td.kx-cell { padding: 0 10px; }
-.kx-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.kx-col-resizer { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
-.kx-col-resizer:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent); }
-.kx-col-time { width: 132px; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary); }
-.kx-col-part { width: 42px; text-align: right; }
-.kx-col-offset { width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
-.kx-col-key { color: var(--dsw-alias-label-secondary); }
-.kx-col-size { width: 70px; text-align: right; color: var(--dsw-alias-label-tertiary); }
+/* Data tables (srp-table): this div is the scroll container the table virtualizes against. */
+.kx-data { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
+.kx-data .art-table-header th { font-weight: 600; white-space: nowrap; }
+.kx-data td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.kx-data-rows tbody tr { cursor: pointer; }
+.kx-data-rows tbody tr:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
+.kx-data-empty { color: var(--dsw-alias-label-tertiary); }
+.kx-col-time, .kx-col-key { color: var(--dsw-alias-label-secondary); }
+.kx-col-size { color: var(--dsw-alias-label-tertiary); }
 .kx-virt { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 /* Topic/group list and its detail share one vertical pane group (react-resizable-panels). */
 .kx-split { flex: 1; min-height: 0; }
@@ -1661,18 +1584,7 @@ export function factory(require) {
 .kx-splitter:hover, .kx-splitter[data-separator="active"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent); }
 .kx-detail.kx-detail-pane { flex: 1; min-height: 0; max-height: none; height: 100%; border-top: none; }
 .kx-empty { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; min-height: 80px; color: var(--dsw-alias-label-tertiary); }
-.kx-empty-cell { text-align: center; color: var(--dsw-alias-label-tertiary); padding: 16px !important; }
 .kx-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kx-table { width: 100%; border-collapse: collapse; }
-.kx-table th { text-align: left; padding: 5px 10px; color: var(--dsw-alias-label-tertiary); font-weight: 600; border-bottom: 1px solid var(--dsw-alias-border-l3); position: sticky; top: 0; background: var(--dsw-alias-bg-base); }
-.kx-table td { padding: 5px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3); }
-.kx-table .kx-num, .kx-table th.kx-num { text-align: right; font-variant-numeric: tabular-nums; }
-.kx-table-sub { margin: 4px 0 8px 16px; width: calc(100% - 16px); }
-.kx-table-sub th { position: static; }
-.kx-row-click { cursor: pointer; }
-.kx-row-click:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.kx-row-click:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
-.kx-row-selected { background: var(--dsw-alias-interactive-bg-active); }
 .kx-detail { flex: none; max-height: 40%; display: flex; flex-direction: column; border-top: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-l1); }
 .kx-detail-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .kx-detail-title { font-weight: 600; }

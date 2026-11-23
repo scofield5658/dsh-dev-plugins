@@ -35,6 +35,8 @@ const result = await build({
   keepNames: true,
   legalComments: 'none',
   external: EXTERNAL,
+  // Bundled libraries branch on NODE_ENV; the browser has no `process`.
+  define: { 'process.env.NODE_ENV': '"production"' },
   logLevel: 'warning',
 })
 

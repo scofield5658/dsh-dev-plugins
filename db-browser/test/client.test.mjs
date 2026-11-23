@@ -38,6 +38,10 @@ function fakeReact() {
     memo: (component) => component,
     Children: { only: (c) => c, toArray: (c) => (Array.isArray(c) ? c : [c]) },
     isValidElement: (value) => Boolean(value && value.__element),
+    // srp-table defines class and styled components while the bundle initializes.
+    forwardRef: (render) => render,
+    Component: class {},
+    PureComponent: class {},
     Fragment: 'Fragment',
   }
 }
@@ -178,6 +182,10 @@ function createStatefulReact() {
     memo: (component) => component,
     Children: { only: (c) => c, toArray: (c) => (Array.isArray(c) ? c : [c]) },
     isValidElement: (value) => Boolean(value && value.__element),
+    // srp-table defines class and styled components while the bundle initializes.
+    forwardRef: (render) => render,
+    Component: class {},
+    PureComponent: class {},
     Fragment: 'Fragment',
     useRef(init) {
       const index = cursor++

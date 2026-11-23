@@ -61,7 +61,6 @@
     "form.titleNew": "新建连接",
     "form.type": "类型",
     "form.user": "用户名",
-    "grid.colWidth": "拖动调整列宽",
     "grid.null": "NULL",
     "grid.region": "结果表格（聚焦后可用方向键滚动）",
     "header.subtitle": "连接、浏览并查询数据库",
