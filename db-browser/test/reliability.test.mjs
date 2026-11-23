@@ -69,3 +69,54 @@ test('hash scan preserves compact-encoding overflow', async () => {
  assert.equal(second.nextCursor, null)
  assert.equal(scans, 1)
 })
+
+test('reordering rewrites the stored order and rejects a partial or unknown list', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'db-browser-order-'))
+  try {
+    const file = path.join(dir, 'connections.json')
+    const seed = ['a', 'b', 'c'].map((id) => ({ id, type: 'redis', hosts: [{ host: 'h' }] }))
+    await writeFile(file, JSON.stringify({ connections: seed }))
+    const core = new DbCore({ get() {} }, {}, { connectionsFile: file })
+    const order = () => core.list().map((c) => c.id)
+    assert.deepEqual(order(), ['a', 'b', 'c'])
+
+    await core.reorderConnections(['c', 'a', 'b'])
+    assert.deepEqual(order(), ['c', 'a', 'b'])
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).connections.map((c) => c.id), ['c', 'a', 'b'])
+    // A fresh load sees the persisted order, which is what the panel renders after a restart.
+    assert.deepEqual(new DbCore({ get() {} }, {}, { connectionsFile: file }).list().map((c) => c.id), ['c', 'a', 'b'])
+
+    for (const bad of [['a', 'b'], ['a', 'a', 'b'], ['a', 'b', 'zz']]) {
+      await assert.rejects(() => core.reorderConnections(bad), (e) => e.code === 'bad-request', `rejects ${bad.join(',')}`)
+    }
+    assert.deepEqual(order(), ['c', 'a', 'b'], 'a rejected reorder leaves the order untouched')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a reorder queued behind a save or delete is validated against the list it will rewrite', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'db-browser-order-race-'))
+  try {
+    const file = path.join(dir, 'connections.json')
+    const seed = ['a', 'b', 'c'].map((id) => ({ id, type: 'redis', hosts: [{ host: 'h' }] }))
+    const stored = async () => JSON.parse(await readFile(file, 'utf8')).connections.map((c) => c.id)
+
+    await writeFile(file, JSON.stringify({ connections: seed }))
+    let core = new DbCore({ get() {} }, {}, { connectionsFile: file })
+    const saved = core.saveConnection({ id: 'd', type: 'redis', hosts: [{ host: 'h' }] })
+    await assert.rejects(() => core.reorderConnections(['c', 'b', 'a']), (e) => e.code === 'bad-request')
+    await saved
+    assert.deepEqual(await stored(), ['a', 'b', 'c', 'd'], 'the saved connection survives')
+
+    await writeFile(file, JSON.stringify({ connections: seed }))
+    core = new DbCore({ get() {} }, {}, { connectionsFile: file })
+    const deleted = core.deleteConnection('b')
+    await assert.rejects(() => core.reorderConnections(['c', 'b', 'a']), (e) => e.code === 'bad-request')
+    await deleted
+    assert.deepEqual(await stored(), ['a', 'c'], 'no null entry is written')
+    assert.deepEqual(new DbCore({ get() {} }, {}, { connectionsFile: file }).list().map((c) => c.id), ['a', 'c'])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

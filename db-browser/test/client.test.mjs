@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import vm from 'node:vm'
+import { hostsToText, textToHosts } from '../src/client.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -25,8 +26,41 @@ function fakeReact() {
     createElement: (...args) => ({ __element: args }),
     useState: (v) => [v, () => {}],
     useEffect: () => {},
+    useLayoutEffect: () => {},
     useCallback: (f) => f,
+    useMemo: (f) => f(),
     useRef: (v) => ({ current: v }),
+    useId: () => 'id',
+    useContext: () => ({}),
+    createContext: () => ({ Provider: ({ children }) => children, Consumer: () => null }),
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
+    useImperativeHandle: () => {},
+    memo: (component) => component,
+    Children: { only: (c) => c, toArray: (c) => (Array.isArray(c) ? c : [c]) },
+    isValidElement: (value) => Boolean(value && value.__element),
+    Fragment: 'Fragment',
+  }
+}
+
+/** The module-table entries the built bundle may require. */
+function fakeReactDom() {
+  return { createPortal: () => null, flushSync: (fn) => fn() }
+}
+
+function fakeJsxRuntime() {
+  return {
+    Fragment: 'Fragment',
+    jsx: (type, props) => ({ __element: [type, props] }),
+    jsxs: (type, props) => ({ __element: [type, props] }),
+  }
+}
+
+function moduleTable(react) {
+  return (name) => {
+    if (name === 'react') return react
+    if (name === 'react-dom') return fakeReactDom()
+    if (name === 'react/jsx-runtime') return fakeJsxRuntime()
+    throw new Error(`unexpected require ${name}`)
   }
 }
 
@@ -50,7 +84,7 @@ function fakeCtx() {
 test('client module registers the sidebar icon and the main panel', () => {
   const mod = loadClient()
   assert.equal(mod.id, '@local/db-browser')
-  const plugin = mod.factory((name) => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = mod.factory(moduleTable(fakeReact()))
   // inject comes from the vm realm; compare by value, not prototype.
   assert.equal(JSON.stringify(plugin.inject), JSON.stringify(['slots', 'locale']))
   const { registrations, getLocaleDicts, ctx } = fakeCtx()
@@ -67,7 +101,7 @@ test('client module registers the sidebar icon and the main panel', () => {
 
 test('locale files carry the same UI dictionary the panel registers', () => {
   const mod = loadClient()
-  const plugin = mod.factory((name) => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = mod.factory(moduleTable(fakeReact()))
   const { getLocaleDicts, ctx } = fakeCtx()
   plugin.apply(ctx)
   const { dicts } = getLocaleDicts()
@@ -77,7 +111,8 @@ test('locale files carry the same UI dictionary the panel registers', () => {
     const stored = Object.fromEntries(Object.entries(file.ui).sort(([a], [b]) => a.localeCompare(b)))
     assert.deepEqual(stored, registered, `${lang} locale ui must match the registered dictionary`)
   }
-  const src = readFileSync(join(here, '..', 'client.js'), 'utf8')
+  // Key usage must be scanned in the authored source, not the bundled artifact.
+  const src = readFileSync(join(here, '..', 'src', 'client.js'), 'utf8')
   for (const match of src.matchAll(/\bt\('([^']+)'/g)) {
     assert.ok(match[1] in dicts.zh, `locale key used but missing from zh: ${match[1]}`)
     assert.ok(match[1] in dicts.en, `locale key used but missing from en: ${match[1]}`)
@@ -85,32 +120,25 @@ test('locale files carry the same UI dictionary the panel registers', () => {
 })
 
 test('host lists use a comma, matching Kafka broker addresses', () => {
-  const mod = loadClient()
-  assert.equal(typeof mod.hostList?.fromText, 'function')
-  // Objects created inside the vm realm fail prototype checks; compare by value.
-  const parsed = (text) => JSON.parse(JSON.stringify(mod.hostList.fromText(text)))
-  assert.deepEqual(parsed('10.0.0.1:6379, 10.0.0.2:6380'), [
+  assert.deepEqual(textToHosts('10.0.0.1:6379, 10.0.0.2:6380'), [
     { host: '10.0.0.1', port: 6379 },
     { host: '10.0.0.2', port: 6380 },
   ])
-  assert.deepEqual(parsed('[::1]:6379, 10.0.0.3:6379'), [
+  assert.deepEqual(textToHosts('[::1]:6379, 10.0.0.3:6379'), [
     { host: '[::1]', port: 6379 },
     { host: '10.0.0.3', port: 6379 },
   ])
   // Previously documented one-per-line input, and semicolon-separated input, still parse.
-  assert.deepEqual(parsed('10.0.0.1:6379\n10.0.0.2:6379'), [
+  assert.deepEqual(textToHosts('10.0.0.1:6379\n10.0.0.2:6379'), [
     { host: '10.0.0.1', port: 6379 },
     { host: '10.0.0.2', port: 6379 },
   ])
-  assert.deepEqual(parsed('10.0.0.1:26379; 10.0.0.2:26379'), [
+  assert.deepEqual(textToHosts('10.0.0.1:26379; 10.0.0.2:26379'), [
     { host: '10.0.0.1', port: 26379 },
     { host: '10.0.0.2', port: 26379 },
   ])
-  assert.equal(
-    mod.hostList.toText([{ host: '10.0.0.1', port: 6379 }, { host: '10.0.0.2', port: 6380 }]),
-    '10.0.0.1:6379, 10.0.0.2:6380',
-  )
-  const plugin = mod.factory((name) => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  assert.equal(hostsToText([{ host: '10.0.0.1', port: 6379 }, { host: '10.0.0.2', port: 6380 }]), '10.0.0.1:6379, 10.0.0.2:6380')
+  const plugin = loadClient().factory(moduleTable(fakeReact()))
   const { getLocaleDicts, ctx } = fakeCtx()
   plugin.apply(ctx)
   const { dicts } = getLocaleDicts()
@@ -139,7 +167,18 @@ function createStatefulReact() {
       return [slots[index], (next) => { slots[index] = typeof next === 'function' ? next(slots[index]) : next }]
     },
     useEffect(effect) { effects.push(effect) },
+    useLayoutEffect(effect) { effects.push(effect) },
     useCallback: (fn) => fn,
+    useMemo: (fn) => fn(),
+    useId: () => 'id',
+    useContext: () => ({}),
+    createContext: () => ({ Provider: ({ children }) => children, Consumer: () => null }),
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
+    useImperativeHandle: () => {},
+    memo: (component) => component,
+    Children: { only: (c) => c, toArray: (c) => (Array.isArray(c) ? c : [c]) },
+    isValidElement: (value) => Boolean(value && value.__element),
+    Fragment: 'Fragment',
     useRef(init) {
       const index = cursor++
       if (!Object.hasOwn(slots, index)) slots[index] = { current: init }
@@ -197,7 +236,7 @@ test('starting Redis does not query it as SQL, and a stopped Redis view does not
   }
   vm.runInNewContext(src, sandbox)
   const react = createStatefulReact()
-  const plugin = captured.factory((name) => (name === 'react' ? react : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(react))
   let Panel = null
   plugin.apply({
     effect: (fn) => (typeof fn === 'function' ? fn() : undefined),
@@ -227,6 +266,8 @@ test('starting Redis does not query it as SQL, and a stopped Redis view does not
     return typeof type === 'function' && props?.label === 'cache-redis'
   })
   assert.ok(row, 'redis connection row rendered')
+  assert.equal(typeof row.__element[1].onToggle, 'function', 'redis rows keep the same expand affordance as SQL rows')
+  assert.equal(row.__element[1].draggable, true, 'connection rows are draggable for reordering')
   row.__element[1].onClick()
   const viewing = render()
   await react.flush()
@@ -243,4 +284,57 @@ test('starting Redis does not query it as SQL, and a stopped Redis view does not
   await react.flush()
   assert.equal(calls.some((url) => url.endsWith('/redis-keys')), false, 'opening a redis connection must not scan keys')
   assert.equal(calls.some((url) => url.endsWith('/redis-dbsize')), true, 'dbsize is a constant-time count, not a key scan')
+})
+
+test('expanding a connection lists keyspaces for Redis and schemas for SQL', async () => {
+  const calls = []
+  const conn = { id: 'cache', label: 'cache', type: 'redis', mode: 'standalone', hosts: [{ host: '10.0.0.1', port: 6379 }], status: 'open' }
+  const src = readFileSync(join(here, '..', 'client.js'), 'utf8')
+  let captured = null
+  const sandbox = {
+    window: { __ModuleLoader__: { load: (m) => { captured = m } }, confirm: () => false },
+    console,
+    fetch: async (url) => {
+      const path = String(url)
+      calls.push(path)
+      const ok = (value) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) })
+      if (path.endsWith('/connections')) return ok({ connections: [conn], allowWrites: false, maxRows: 500 })
+      if (path.endsWith('/redis-info')) return ok({ mode: 'standalone', dbsize: 3, sections: { keyspace: { db2: 'keys=3,expires=0,avg_ttl=0' } } })
+      if (path.endsWith('/redis-dbsize')) return ok({ dbsize: 3 })
+      return ok({})
+    },
+  }
+  vm.runInNewContext(src, sandbox)
+  const react = createStatefulReact()
+  const plugin = captured.factory(moduleTable(react))
+  let Panel = null
+  plugin.apply({
+    effect: (fn) => (typeof fn === 'function' ? fn() : undefined),
+    locale: { register: () => () => {}, bind: () => (key) => key },
+    slots: {
+      inject: (_slot, callback) => callback(),
+      register: (reg, component) => { if (reg.name === 'main') Panel = component; return () => {} },
+    },
+  })
+  const render = () => { react.begin(); return Panel({ t: (key) => key }) }
+  render()
+  await react.flush()
+  render()
+  await react.flush()
+
+  const labelsOf = (tree) => [...walkElements(tree)]
+    .map((el) => el.__element[1]?.label)
+    .filter((label) => typeof label === 'string')
+  const row = [...walkElements(render())].find((el) => el.__element[1]?.label === 'cache')
+  assert.ok(row, 'connection row rendered')
+  assert.equal(typeof row.__element[1].onToggle, 'function', 'a Redis row offers the same expand affordance as a SQL row')
+  assert.ok(!row.__element[1].expanded, 'the node starts collapsed')
+
+  row.__element[1].onToggle()
+  await react.flush()
+  const expanded = render()
+  assert.ok(calls.some((path) => path.endsWith('/redis-info')), 'expanding a Redis connection reads INFO keyspace')
+  assert.ok(labelsOf(expanded).includes('db2'), `keyspace row rendered, got ${labelsOf(expanded).join(',')}`)
+  assert.equal(calls.some((path) => path.endsWith('/list-databases')), false, 'a Redis connection is never queried as SQL')
+  assert.equal(calls.some((path) => path.endsWith('/redis-keys')), false, 'expanding does not scan keys')
 })

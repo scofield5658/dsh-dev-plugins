@@ -7,6 +7,11 @@ import vm from 'node:vm'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
+/** Authored source: key-usage scans must read this, not the bundled artifact. */
+function sourceText() {
+  return readFileSync(join(here, '..', 'src', 'client.js'), 'utf8')
+}
+
 /** Load client.js with the module-loader surface stubbed; returns the captured module. */
 function loadClient() {
   const src = readFileSync(join(here, '..', 'client.js'), 'utf8')
@@ -26,8 +31,41 @@ function fakeReact() {
     createElement: (...args) => ({ __element: args }),
     useState: v => [v, () => {}],
     useEffect: () => {},
+    useLayoutEffect: () => {},
     useCallback: f => f,
+    useMemo: f => f(),
     useRef: v => ({ current: v }),
+    useId: () => 'id',
+    useContext: () => ({}),
+    createContext: () => ({ Provider: ({ children }) => children, Consumer: () => null }),
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
+    useImperativeHandle: () => {},
+    memo: component => component,
+    Children: { only: c => c, toArray: c => (Array.isArray(c) ? c : [c]) },
+    isValidElement: value => Boolean(value && value.__element),
+    Fragment: Symbol.for('test.fragment'),
+  }
+}
+
+/** The module-table entries the built bundle may require. */
+function fakeReactDom() {
+  return { createPortal: () => null, flushSync: fn => fn() }
+}
+
+function fakeJsxRuntime() {
+  return {
+    Fragment: Symbol.for('test.fragment'),
+    jsx: (type, props) => ({ __element: [type, props] }),
+    jsxs: (type, props) => ({ __element: [type, props] }),
+  }
+}
+
+function moduleTable(react) {
+  return name => {
+    if (name === 'react') return react
+    if (name === 'react-dom') return fakeReactDom()
+    if (name === 'react/jsx-runtime') return fakeJsxRuntime()
+    throw new Error(`unexpected require ${name}`)
   }
 }
 
@@ -51,7 +89,7 @@ function fakeCtx() {
 test('client module registers the sidebar icon and the main panel', () => {
   const { captured } = loadClient()
   assert.equal(captured.id, '@local/kafka-tool')
-  const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(fakeReact()))
   // Arrays from the vm realm fail prototype checks; re-home them first.
   assert.deepEqual([...plugin.inject], ['slots', 'locale'])
   const { registrations, getLocaleDicts, ctx } = fakeCtx()
@@ -71,7 +109,7 @@ test('client module registers the sidebar icon and the main panel', () => {
 
 test('locale files carry the same UI dictionary the panel registers', () => {
   const { captured, src } = loadClient()
-  const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(fakeReact()))
   const { getLocaleDicts, ctx } = fakeCtx()
   plugin.apply(ctx)
   const { dicts } = getLocaleDicts()
@@ -81,7 +119,7 @@ test('locale files carry the same UI dictionary the panel registers', () => {
     const stored = Object.fromEntries(Object.entries(file.ui).sort(([a], [b]) => a.localeCompare(b)))
     assert.deepEqual(stored, registered, `${lang} locale ui must match the registered dictionary`)
   }
-  for (const match of src.matchAll(/\bt\('([^']+)'/g)) {
+  for (const match of sourceText().matchAll(/\bt\('([^']+)'/g)) {
     assert.ok(match[1] in dicts.zh, `locale key used but missing from zh: ${match[1]}`)
     assert.ok(match[1] in dicts.en, `locale key used but missing from en: ${match[1]}`)
   }
@@ -89,7 +127,7 @@ test('locale files carry the same UI dictionary the panel registers', () => {
 
 test('zh and en locale dictionaries carry the same keys', () => {
   const { captured } = loadClient()
-  const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(fakeReact()))
   const { getLocaleDicts, ctx } = fakeCtx()
   plugin.apply(ctx)
   const { dicts } = getLocaleDicts()
@@ -102,12 +140,12 @@ test('zh and en locale dictionaries carry the same keys', () => {
 
 test('every translated key used in the source exists in the dictionaries', () => {
   const { captured, src } = loadClient()
-  const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(fakeReact()))
   const { getLocaleDicts, ctx } = fakeCtx()
   plugin.apply(ctx)
   const { dicts } = getLocaleDicts()
   const used = new Set()
-  for (const match of src.matchAll(/\bt\('([^']+)'/g)) used.add(match[1])
+  for (const match of sourceText().matchAll(/\bt\('([^']+)'/g)) used.add(match[1])
   for (const key of used) {
     assert.ok(key in dicts.en, `locale key used but missing from en: ${key}`)
     assert.ok(key in dicts.zh, `locale key used but missing from zh: ${key}`)
@@ -116,13 +154,13 @@ test('every translated key used in the source exists in the dictionaries', () =>
 
 test('dictionaries never interpolate unknown parameters', () => {
   const { captured, src } = loadClient()
-  const plugin = captured.factory(name => (name === 'react' ? fakeReact() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(fakeReact()))
   const { getLocaleDicts, ctx } = fakeCtx()
   plugin.apply(ctx)
   const { dicts } = getLocaleDicts()
   // Keys whose call site passes parameters must declare them; find call sites
   // like t('key', { count: ... }) and ensure each param appears in both dicts.
-  for (const match of src.matchAll(/\bt\('([^']+)', \{ (\w+):/g)) {
+  for (const match of sourceText().matchAll(/\bt\('([^']+)', \{ (\w+):/g)) {
     const [, key, param] = match
     assert.ok(dicts.en[key]?.includes(`{${param}}`), `en dict ${key} must use {${param}}`)
     assert.ok(dicts.zh[key]?.includes(`{${param}}`), `zh dict ${key} must use {${param}}`)
@@ -138,6 +176,15 @@ function fakeReactRuntime() {
     useCallback: f => f,
     useMemo: f => f(),
     useRef: v => ({ current: v }),
+    useId: () => 'id',
+    useContext: () => ({}),
+    createContext: () => ({ Provider: ({ children }) => children, Consumer: () => null }),
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
+    useImperativeHandle: () => {},
+    useLayoutEffect: () => {},
+    memo: component => component,
+    Children: { only: c => c, toArray: c => (Array.isArray(c) ? c : [c]) },
+    isValidElement: value => Boolean(value && value.__element),
   }
 }
 
@@ -170,7 +217,7 @@ test('the connect button builds its request from the form, not the click event',
   }
   vm.runInNewContext(src, sandbox)
   assert.ok(captured, 'client.js must register a module')
-  const plugin = captured.factory(name => (name === 'react' ? fakeReactRuntime() : (() => { throw new Error(`unexpected require ${name}`) })()))
+  const plugin = captured.factory(moduleTable(fakeReactRuntime()))
 
   let panelComponent = null
   const ctx = {

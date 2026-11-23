@@ -419,6 +419,24 @@ class DbCore {
     return { deleted: current.id }
   }
 
+  /** Rewrite the stored connection list in the given order; every existing id must appear exactly once. */
+  async reorderConnections(ids) {
+    if (!Array.isArray(ids)) fail('bad-request', 'ids must be an array of connection ids')
+    const wanted = ids.map((id) => String(id))
+    // Validate inside the queue: a save or delete queued ahead of us changes the set being ordered.
+    return this.enqueueWrite(async () => {
+      const current = [...this.connections.keys()]
+      if (new Set(wanted).size !== wanted.length) fail('bad-request', 'ids contains duplicates')
+      if (wanted.length !== current.length) fail('bad-request', 'ids must list every connection exactly once')
+      for (const id of wanted) if (!this.connections.has(id)) fail('bad-request', `Unknown connection "${id}"`)
+      if (wanted.every((id, i) => id === current[i])) return { order: current }
+      const ordered = wanted.map((id) => this.connections.get(id))
+      await this.persistConnections(ordered)
+      this.connections = new Map(ordered.map((c) => [c.id, c]))
+      return { order: wanted }
+    })
+  }
+
   statusOf(id) {
     return this.sessions.has(id) ? 'open' : 'stopped'
   }
@@ -1409,6 +1427,7 @@ async function dispatchPanelOp(core, op, p) {
       try { await core.savePassword(p.id, '') } catch { /* credential store unavailable */ }
       return core.deleteConnection(p.id)
     }
+    case 'reorder-connections': return core.reorderConnections(p.ids)
     case 'test': return core.test(p.connection, p.password)
     case 'connect': return core.startConnection(p.id)
     case 'disconnect': return core.stopConnection(p.id)

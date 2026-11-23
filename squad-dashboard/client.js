@@ -395,7 +395,7 @@ window.__ModuleLoader__.load({
 
     /** Squad configuration view: manage the member roster and one model
      *  route per member, then save the shared config file Leaders can read. */
-    /** Drag a handle to resize one CSS length; the value persists per panel. */
+    /** Drag the label-column separator; the CSS variable is written directly while dragging. */
     function useDraggableWidth(initial, min, max, storageKey) {
       const read = () => {
         try {
@@ -405,29 +405,45 @@ window.__ModuleLoader__.load({
         return initial
       }
       const [width, setWidth] = useState(read)
-      const dragRef = useRef(null)
+      const stopRef = useRef(null)
 
       const onPointerDown = useCallback((event) => {
+        if (stopRef.current) return
+        if (event.pointerType === 'mouse' && event.button !== 0) return
+        const root = event.currentTarget.closest('.sd-config')
         event.preventDefault()
         const startX = event.clientX
-        const startWidth = dragRef.current ?? width
-        const onMove = (moveEvent) => {
-          const next = Math.min(max, Math.max(min, startWidth + (moveEvent.clientX - startX)))
-          dragRef.current = next
-          setWidth(next)
+        const startWidth = width
+        let latest = startWidth
+        let frame = 0
+        // One rAF-coalesced style write per frame: the whole view does not re-render while dragging.
+        const paint = () => {
+          frame = 0
+          root.style.setProperty('--sd-label-w', `${Math.round(latest)}px`)
+        }
+        const move = (moveEvent) => {
+          latest = Math.min(max, Math.max(min, startWidth + (moveEvent.clientX - startX)))
+          if (!frame) frame = requestAnimationFrame(paint)
+        }
+        const teardown = () => {
+          cancelAnimationFrame(frame)
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', onUp)
+          window.removeEventListener('pointercancel', onUp)
+          stopRef.current = null
         }
         const onUp = () => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
-          const finalWidth = dragRef.current
-          dragRef.current = null
-          if (finalWidth !== null) {
-            try { globalThis.localStorage?.setItem(storageKey, String(finalWidth)) } catch { /* ignore */ }
-          }
+          teardown()
+          setWidth(Math.round(latest))
+          try { globalThis.localStorage?.setItem(storageKey, String(Math.round(latest))) } catch { /* ignore */ }
         }
-        window.addEventListener('pointermove', onMove)
+        stopRef.current = teardown
+        window.addEventListener('pointermove', move)
         window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onUp)
       }, [width, min, max, storageKey])
+
+      useEffect(() => () => { stopRef.current?.() }, [])
 
       const reset = useCallback(() => {
         setWidth(initial)
@@ -460,7 +476,7 @@ window.__ModuleLoader__.load({
 
     function ConfigView(props) {
       const { t } = props
-      const [labelWidth] = useDraggableWidth(112, 88, 240, 'squad-dashboard.config.labelWidth')
+      const [labelWidth, startLabelResize, resetLabelWidth] = useDraggableWidth(112, 88, 240, 'squad-dashboard.config.labelWidth')
       const [catalog, setCatalog] = useState(null)
       const [draft, setDraft] = useState(null)
       const [bootError, setBootError] = useState(null)
@@ -671,6 +687,17 @@ window.__ModuleLoader__.load({
       )
       const kinds = Object.entries(draft.members ?? {})
 
+      // One separator per block: it sits on the label column edge and never covers the hero.
+      const labelResizer = () => h('div', {
+        className: 'sd-label-resizer',
+        role: 'separator',
+        'aria-orientation': 'vertical',
+        'aria-label': t('config.labelWidthHint'),
+        title: t('config.labelWidthHint'),
+        onPointerDown: startLabelResize,
+        onDoubleClick: resetLabelWidth,
+      })
+
       return h('div', { className: 'sd-config', style: { '--sd-label-w': `${labelWidth}px` } },
         h('header', { className: 'sd-hero' },
           h('div', { className: 'sd-hero-copy' },
@@ -679,6 +706,7 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('section', { className: 'sd-config-block', 'aria-labelledby': 'sd-block-local' },
+          labelResizer(),
           h('div', { className: 'sd-block-head' },
             h('h3', { className: 'sd-block-title', id: 'sd-block-local' }, t('config.local')),
             h('p', { className: 'sd-block-hint' }, t('config.localHint')),
@@ -725,6 +753,7 @@ window.__ModuleLoader__.load({
         ),
         remoteDraft
           ? h('section', { className: 'sd-config-block sd-config-block-remote', 'aria-labelledby': 'sd-block-remote' },
+              labelResizer(),
               h('div', { className: 'sd-block-head' },
                 h('h3', { className: 'sd-block-title', id: 'sd-block-remote' }, t('config.remote')),
                 h('p', { className: 'sd-block-hint' }, t('config.remote.hint')),
@@ -1260,8 +1289,24 @@ window.__ModuleLoader__.load({
 .sd-tab:hover { background: var(--dsw-alias-bg-base, Canvas); }
 .sd-tab-active { background: var(--dsw-alias-bg-base, Canvas); color: var(--dsw-alias-label-primary, CanvasText); font-weight: 600; }
 /* squad configuration */
-.sd-config { --sd-label-w: 112px; display: flex; flex-direction: column; gap: 14px; }
+.sd-config { --sd-label-w: 112px; position: relative; display: flex; flex-direction: column; gap: 14px; }
+/* Drag the label column edge; it sits above the blocks so one handle serves every row. */
+.sd-label-resizer {
+  position: absolute; top: 0; bottom: 0; z-index: 2;
+  left: calc(14px + var(--sd-label-w)); margin-left: -4px; width: 9px;
+  cursor: col-resize; touch-action: none; border-radius: 4px;
+}
+.sd-label-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
+  background: var(--dsw-alias-border-l1, ButtonBorder); opacity: 0; transition: opacity .12s;
+}
+.sd-config-block:hover .sd-label-resizer::after { opacity: .8; }
+.sd-label-resizer:hover, .sd-label-resizer:active {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, Highlight) 35%, transparent);
+}
+.sd-label-resizer:hover::after, .sd-label-resizer:active::after { opacity: 0; }
 .sd-config-block {
+  position: relative;
   display: flex; flex-direction: column; gap: 10px;
   padding: 12px 14px;
   border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);

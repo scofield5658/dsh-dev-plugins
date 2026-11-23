@@ -41,6 +41,8 @@ cd <plugin-dir>
 pnpm test
 ```
 
+插件的浏览器端需要 npm 依赖时，在插件目录内自建构建：源码放 `src/client.js`，构建脚本与 devDependencies 归该插件所有，生成的 `client.js` 随仓库提交，`pnpm test` 前先检查产物是否过期，具体见该插件 README 的「客户端构建」。不需要的插件保持单文件 `client.js`，直接修改。
+
 新增插件时另建同级子目录，并保持它是开发者在编码、联调或排障时会打开的工具。目录边界、入口、主题和界面语言见 [AGENTS.md](AGENTS.md)。动手前先在插件市场 [dsh-market](https://github.com/dsh-market/dsh-market) 检索同类插件；已有插件能覆盖需求时，复用社区版本。
 
 ## 许可

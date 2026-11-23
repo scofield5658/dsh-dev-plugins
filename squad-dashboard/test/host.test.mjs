@@ -163,6 +163,8 @@ test('locale files match the client dictionaries', () => {
   for (const file of ['en.json', 'zh.json']) {
     const dict = JSON.parse(readFileSync(new URL(`../locale/${file}`, import.meta.url), 'utf8'))
     for (const [key, value] of Object.entries(dict)) {
+      // `meta` is plugin display metadata for the Plugin Manager, not a client UI string.
+      if (key === 'meta') continue
       const quoted = client.includes(`'${key}'`) || client.includes(`"${key}"`)
       const bare = new RegExp(`(^|\\n)\\s*${key}\\s*:`).test(client)
       assert.equal(quoted || bare, true, `${file} key ${key}`)

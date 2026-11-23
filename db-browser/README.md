@@ -10,7 +10,8 @@
 - **特性矩阵**：厂商之间能力不同（典型差异：TDSQL、GoldenDB 不支持存储过程；DDL 查看只有 MySQL 族有）。每种类型有一组默认特性开关（`showCreate` / `explain` / `procedures`），面板和 Agent 工具按它显示或拒绝对应能力；可以在插件配置 `features` 里按类型覆盖。
 - **存储过程**：`procedures: true` 的类型（默认 MySQL、PostgreSQL、Oracle）提供存储过程/函数的列表、定义查看和执行（Oracle 含 PACKAGE 源码查看；执行仅限独立 procedure，且要求 `allowWrites: true`）。
 - **连接池**：每个启动的连接维护一个常驻连接池（mysql2/pg/oracledb 各自的 pool，大小由 `poolMax` 控制，默认 4），界面与 Agent 并发查询共享，避免频繁建连。Redis 单连接天然多路复用，不需要池。
-- **界面**：侧边栏面板列表中的「数据库」入口。左侧连接树（连接 → 库/Schema → 表），右侧 SQL 编辑器与结果网格；支持存储过程的连接有「SQL / 存储过程」子页签；Redis 连接提供键扫描与值查看。连接行上的 ⧉ 按钮可复制连接：带出类型、主机、用户名等可编辑字段，id 与密码留空待填。
+- **界面**：侧边栏面板列表中的「数据库」入口。左侧连接树（连接 → 库/Schema → 表），右侧 SQL 编辑器与结果网格；支持存储过程的连接有「SQL / 存储过程」子页签；Redis 连接提供键扫描与值查看，展开连接时按 INFO keyspace 列出非空的库与键数。连接行上的 ⧉ 按钮可复制连接：带出类型、主机、用户名等可编辑字段，id 与密码留空待填。连接行可拖动调整顺序，顺序持久化到 `DSH_HOME/plugins/db-browser/connections.json`；行尾右对齐显示状态点与类型标签，悬停时由行内操作按钮覆盖。
+- **分栏**：三处分栏都基于 `react-resizable-panels` 的 `Group / Panel / Separator`——连接树｜主区域、Redis 键列表｜值详情、存储过程列表｜定义。分隔条可拖动、可聚焦后用方向键调整，双击恢复默认宽度；连接树宽度按像素记忆在 localStorage。结果网格的列宽是表格列而非面板，仍用自研拖拽（拖动期直接写 `<col>`，松手提交一次状态）。
 - **Agent 工具**：`db_browser`（连接列表、库表结构、执行 SQL、存储过程 list/show/call）与 `redis_browser`（INFO、扫描键、读值、只读命令）。
 - **安全**：默认只读；在插件配置中设 `allowWrites: true` 才允许写操作与存储过程执行。密码保存在凭据存储，不进入配置文件。
 
@@ -125,6 +126,17 @@ pnpm install --prod   # 安装 mysql2 / ioredis / oracledb 驱动（oracledb 的
 ```
 
 然后在 DSH 的 **Plugins → Add plugin** 中选择该目录（本地目录以 link 方式装入，驱动从目录内的 `node_modules` 解析）；升级时 `git pull` 后在插件管理中重载即可。
+
+## 客户端构建
+
+`client.js` 是**生成产物**，源码在 `src/client.js`。`build/client.mjs` 用 esbuild 把源码（含 `react-resizable-panels`）打成 CJS，再重新包进 `window.__ModuleLoader__.load({ id, factory })` 信封；`react`、`react-dom`、`react/jsx-runtime` 保持 external，由宿主模块表提供，其余依赖内联进产物。产物不压缩，便于评审 diff 与调试。
+
+```bash
+pnpm build   # 重新生成 client.js
+pnpm test    # pretest 先检查 client.js 是否与 src 一致，过期则失败，再跑测试
+```
+
+改界面请改 `src/client.js`，不要手改 `client.js`；改完运行 `pnpm build`，把源码和产物一起提交。`test/panels.render.test.mjs` 用真实 React 18 做一次静态渲染，校验产物结构（`data-group` / 两个 `data-panel` / `data-separator`）以及产物只 require 宿主模块表里的名字。
 
 ## 开发约定：冷启动陷阱（改动前必读）
 

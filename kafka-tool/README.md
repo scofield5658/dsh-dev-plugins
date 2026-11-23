@@ -6,9 +6,10 @@ Kafka Tool 风格的侧边栏数据查询面板。
 - **连接生命周期**：连接由你手动点「连接」启动；切换窗口/面板不会断开（Host 端空闲 15 分钟才回收，回来自动恢复现场并重新加载最新数据）；DSH 退出时全部自动断开，重启后保持断开、等你手动连接。
 - **Agent 工具**：`kafka_query`（连接、topic/分区位点、消费者组 lag、peek 最新消息、按 offset 读单条消息），与面板共享 Host 端连接，全部只读。
 - **消息订阅**：同时订阅多个 topic，可从最新、最早、指定时间戳或指定 offset 开始；列表只展示元数据（时间戳、topic、partition、offset、key、大小），虚拟滚动承载数万条缓冲；「加载更早」按分区向前翻页；点击行打开详情弹窗，按需拉取 payload，支持 Hex / 文本 / JSON（自动 pretty）三种查看方式。topic 选择器支持关键字过滤、「全选过滤结果」与「清空选择」（选择器旁的 ✕ 可一键清空已选）。
+- **列宽**：消息流、Topics、消费者组，以及 Topics / 消费者组两处 offset 明细表，表头右缘都可拖动调整列宽——和 db-browser 的结果网格同一套实现（拖动时直接写 `<col>` 宽度、松手才提交一次状态，拖动开始先快照列宽再切 `table-layout: fixed`，所以不跳列）。全部数据列表共用同一个 `VirtualTable`。
 - **过滤**：按分区、key 内容、offset 范围过滤当前缓冲。
-- **Topics**：topic 列表（名称、分区数，数千个 topic 也能秒开），展开行按需加载该 topic 各分区的 begin/end offset 与消息量，一键送去订阅。
-- **消费者组**：组列表（状态、成员数），展开查看各 topic 分区的已提交位点与 lag。
+- **Topics**：topic 列表（名称、分区数，数千个 topic 也能秒开），展开行按需加载该 topic 各分区的 begin/end offset 与消息量，一键送去订阅。展开后列表与详情之间是可拖动的分栏（`react-resizable-panels` 的 `Group / Panel / Separator`，垂直方向，默认 220px，可拖动或用方向键调整，双击分隔条恢复默认）。
+- **消费者组**：组列表（状态、成员数），展开查看各 topic 分区的已提交位点与 lag；列表与详情同样是可拖动的垂直分栏。
 - **刷新**：手动刷新按钮 + 可配置秒数间隔的自动刷新（polling）。
 
 ## 连接配置
@@ -68,6 +69,17 @@ pnpm test
 - 页面消息缓冲上限 5 万条：实时追加丢弃最旧的，历史翻页丢弃最新的（均有提示）。
 - 「加载更早」每次点击每分区回填 100 条。
 - 认证支持 TLS + SASL PLAIN/SCRAM；Kerberos、OAuth、mTLS 证书暂不可配置。
+
+## 客户端构建
+
+`client.js` 是**生成产物**，源码在 `src/client.js`。`build/client.mjs` 用 esbuild 把源码（含 `react-resizable-panels`）打成 CJS，再包回 `window.__ModuleLoader__.load({ id, factory })` 信封；`react`、`react-dom`、`react/jsx-runtime` 保持 external，由宿主模块表提供。产物不压缩，便于评审 diff 与调试。
+
+```bash
+pnpm build   # 重新生成 client.js
+pnpm test    # pretest 先检查 client.js 是否与 src 一致，过期则失败，再跑测试
+```
+
+改界面请改 `src/client.js`，不要手改 `client.js`；改完运行 `pnpm build`，把源码和产物一起提交。`test/panels.render.test.mjs` 用真实 React 18 静态渲染产物，并校验产物只 require 宿主模块表里的名字。
 
 ## 开发约定：冷启动陷阱
 

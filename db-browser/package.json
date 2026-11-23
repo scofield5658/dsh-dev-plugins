@@ -1,6 +1,6 @@
 {
   "name": "@local/db-browser",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "DBeaver-style database browser sidebar panel with agent tools (MySQL/TDSQL-MySQL/GoldenDB, PostgreSQL/TDSQL-PG, Oracle, Redis), pooled connections and a per-vendor feature matrix.",
   "type": "module",
@@ -13,6 +13,8 @@
   "files": [
     "index.js",
     "client.js",
+    "src",
+    "build",
     "mcp-server.js",
     "cordis.patch.yml",
     "locale/*.json",
@@ -20,6 +22,8 @@
     "README.md"
   ],
   "scripts": {
+    "build": "node build/client.mjs",
+    "pretest": "node build/client.mjs --check",
     "test": "node --test test/*.mjs"
   },
   "engines": {
@@ -47,5 +51,11 @@
   },
   "bin": {
     "db-browser-mcp": "./mcp-server.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-resizable-panels": "4.24.1"
   }
 }
