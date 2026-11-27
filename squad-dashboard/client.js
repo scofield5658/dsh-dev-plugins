@@ -36,9 +36,16 @@ window.__ModuleLoader__.load({
       'task.in_progress': 'In progress',
       'task.completed': 'Done',
       'task.blocked': 'Blocked',
+      'task.cancelled': 'Cancelled',
+      'task.review': 'In review',
       'task.ready': 'Ready',
+      'task.col.id': 'ID',
+      'task.col.subject': 'Task',
+      'task.col.initiator': 'Initiator',
+      'task.col.created': 'Created',
+      'task.col.status': 'Status',
       'board.title': 'Task board',
-      'board.remoteTitle': 'Multica task board',
+      'board.remoteTitle': 'Multica task list',
       'workspace.untitled': 'Workspace',
       'kind.dev': 'Engineering squad',
       'kind.product': 'Product squad',
@@ -109,9 +116,16 @@ window.__ModuleLoader__.load({
       'task.in_progress': '进行中',
       'task.completed': '已完成',
       'task.blocked': '阻塞',
+      'task.cancelled': '已取消',
+      'task.review': '评审中',
       'task.ready': '可开始',
+      'task.col.id': '编号',
+      'task.col.subject': '任务',
+      'task.col.initiator': '发起人',
+      'task.col.created': '创建时间',
+      'task.col.status': '状态',
       'board.title': '任务看板',
-      'board.remoteTitle': 'Multica 任务看板',
+      'board.remoteTitle': 'Multica 任务列表',
       'workspace.untitled': '工作区',
       'kind.dev': '研发小队',
       'kind.product': '产品小队',
@@ -236,6 +250,49 @@ window.__ModuleLoader__.load({
       return owner?.sessionId || squad.rootSessionId
     }
 
+    /** Multica workflow state -> list tone. Unknown projects keep their own
+     *  state text, so the list never has to assume a fixed lane vocabulary. */
+    const TASK_TONE = {
+      completed: 'success', done: 'success', closed: 'success', resolved: 'success',
+      in_progress: 'business', started: 'business', active: 'business',
+      blocked: 'error', on_hold: 'error',
+      cancelled: 'idle', canceled: 'idle', duplicate: 'idle',
+      pending: 'warn', todo: 'warn', backlog: 'warn', review: 'warn', in_review: 'warn',
+    }
+    const TASK_STATUS_KEY = {
+      backlog: 'task.pending', todo: 'task.pending', pending: 'task.pending',
+      in_progress: 'task.in_progress', started: 'task.in_progress',
+      blocked: 'task.blocked',
+      completed: 'task.completed', done: 'task.completed', closed: 'task.completed',
+      cancelled: 'task.cancelled', canceled: 'task.cancelled',
+      in_review: 'task.review', review: 'task.review',
+    }
+
+    function taskTone(task) {
+      if (Array.isArray(task.blockedBy) && task.blockedBy.length > 0 && task.status !== 'completed') return 'error'
+      return TASK_TONE[String(task.status ?? '').toLowerCase()] ?? 'warn'
+    }
+
+    /** A project-defined status name wins over the built-in vocabulary. */
+    function taskStatusText(task, t) {
+      if (task.statusName) return task.statusName
+      const key = TASK_STATUS_KEY[String(task.status ?? '').toLowerCase()]
+      if (key) return t(key)
+      return task.status ? String(task.status) : '—'
+    }
+
+    function formatTaskTime(value) {
+      if (!value) return '—'
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return '—'
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+    }
+
+    function shortTaskId(value) {
+      return typeof value === 'string' ? value.slice(0, 8) : '—'
+    }
+
     function StatItem(props) {
       return h('li', { className: `sd-stat sd-stat-${props.tone}` },
         h('span', { className: 'sd-stat-num' }, String(props.value).padStart(2, '0')),
@@ -308,6 +365,7 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** Local Agent Team board: fixed team statuses, so the lanes still fit. */
     function TaskBoard(props) {
       const { squad, t, onOpen, squadHref } = props
       const [open, setOpen] = useState(false)
@@ -327,7 +385,7 @@ window.__ModuleLoader__.load({
           onClick: () => setOpen(!open),
         },
           h('span', { className: 'sd-chevron', 'aria-hidden': true }),
-          squad.kind === 'remote' ? t('board.remoteTitle') : t('board.title'),
+          t('board.title'),
           h('span', { className: 'sd-count' }, String(squad.tasks.length)),
         ),
         open
@@ -348,6 +406,76 @@ window.__ModuleLoader__.load({
                     }))
                   : h('p', { className: 'sd-lane-empty' }, t('lane.empty')),
               )))
+          : null,
+      )
+    }
+
+    /** Remote Multica list: one compact row per issue with the project's own
+     *  workflow status instead of fixed lanes. */
+    function TaskList(props) {
+      const { squad, t, onOpen } = props
+      const [open, setOpen] = useState(true)
+      const listId = domId('sd-tasks', squad.rootSessionId)
+      const tasks = squad.tasks ?? []
+      return h('div', { className: 'sd-board' },
+        h('button', {
+          type: 'button',
+          className: 'sd-board-toggle',
+          'aria-expanded': open,
+          'aria-controls': listId,
+          onClick: () => setOpen(!open),
+        },
+          h('span', { className: 'sd-chevron', 'aria-hidden': true }),
+          t('board.remoteTitle'),
+          h('span', { className: 'sd-count' }, String(tasks.length)),
+        ),
+        open
+          ? h('div', { id: listId, className: 'sd-tasks-wrap' },
+              h('table', { className: 'sd-tasks' },
+                h('colgroup', null,
+                  h('col', { className: 'sd-col-id' }),
+                  h('col', null),
+                  h('col', { className: 'sd-col-person' }),
+                  h('col', { className: 'sd-col-time' }),
+                  h('col', { className: 'sd-col-status' }),
+                ),
+                h('thead', null,
+                  h('tr', null,
+                    h('th', { scope: 'col' }, t('task.col.id')),
+                    h('th', { scope: 'col' }, t('task.col.subject')),
+                    h('th', { scope: 'col' }, t('task.col.initiator')),
+                    h('th', { scope: 'col' }, t('task.col.created')),
+                    h('th', { scope: 'col' }, t('task.col.status')),
+                  ),
+                ),
+                h('tbody', null, tasks.map((task) => {
+                  const tone = taskTone(task)
+                  const href = task.identifier ? remoteLink(squad, `issues/${encodeURIComponent(task.identifier)}`) : null
+                  const activate = href ? () => onOpen(null, href) : null
+                  return h('tr', {
+                    key: task.id,
+                    className: `sd-trow${activate ? ' sd-trow-link' : ''}`,
+                    tabIndex: activate ? 0 : undefined,
+                    onClick: activate || undefined,
+                    onKeyDown: activate
+                      ? (event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          activate()
+                        }
+                      : undefined,
+                    title: task.subject || undefined,
+                  },
+                    h('td', { className: 'sd-cell-id' }, task.identifier || shortTaskId(task.id)),
+                    h('td', { className: 'sd-cell-subject' }, task.subject || '—'),
+                    h('td', { className: 'sd-cell-person' }, task.initiator || '—'),
+                    h('td', { className: 'sd-cell-time' }, formatTaskTime(task.createdAt)),
+                    h('td', { className: 'sd-cell-status' },
+                      h('span', { className: `sd-chip sd-chip-${tone}` }, taskStatusText(task, t))),
+                  )
+                })),
+              ),
+            )
           : null,
       )
     }
@@ -383,13 +511,17 @@ window.__ModuleLoader__.load({
               squad.members.map((member) => h(MemberRow, {
                 key: member.path || member.sessionId || member.name,
                 member,
-                tasks: squad.tasks,
+                tasks: member.tasks ?? squad.tasks,
                 t,
                 href: remoteLink(squad, `agents/${member.sessionId}`),
                 onOpen: openMember,
               })))
           : null,
-        squad.tasks.length > 0 ? h(TaskBoard, { squad, t, onOpen: openMember, squadHref }) : null,
+        squad.tasks.length > 0
+          ? squad.kind === 'remote'
+            ? h(TaskList, { squad, t, onOpen })
+            : h(TaskBoard, { squad, t, onOpen: openMember, squadHref })
+          : null,
       )
     }
 
@@ -922,40 +1054,44 @@ window.__ModuleLoader__.load({
               : null,
           ),
         ),
-        view === 'config'
-          ? h(ConfigView, { t })
-          : source === 'remote' && snapshot && snapshot.configured === false
-          ? h('div', { className: 'sd-empty' }, t('remote.notConfigured'))
-          : h(React.Fragment, null,
-              h('ul', { className: 'sd-stats', role: 'list' },
-                h(StatItem, { tone: 'squads', label: t('stat.squads'), value: squads.length }),
-                h(StatItem, { tone: 'members', label: t('stat.members'), value: totalMembers }),
-                h(StatItem, { tone: 'running', label: t('stat.running'), value: totalRunning }),
-                h(StatItem, { tone: 'tasks', label: t('stat.tasks'), value: totalTasks }),
+        view !== 'config' && !(source === 'remote' && snapshot && snapshot.configured === false)
+          ? h('ul', { className: 'sd-stats', role: 'list' },
+              h(StatItem, { tone: 'squads', label: t('stat.squads'), value: squads.length }),
+              h(StatItem, { tone: 'members', label: t('stat.members'), value: totalMembers }),
+              h(StatItem, { tone: 'running', label: t('stat.running'), value: totalRunning }),
+              h(StatItem, { tone: 'tasks', label: t('stat.tasks'), value: totalTasks }),
+            )
+          : null,
+        h('div', { className: 'sd-scroll', key: `${view}:${source}` },
+          view === 'config'
+            ? h(ConfigView, { t })
+            : source === 'remote' && snapshot && snapshot.configured === false
+            ? h('div', { className: 'sd-empty' }, t('remote.notConfigured'))
+            : h(React.Fragment, null,
+                loading && !snapshot
+                  ? h('div', { className: 'sd-loading', role: 'status', 'aria-live': 'polite' },
+                      h('span', { className: 'sd-spinner sd-spinner-lg', 'aria-hidden': true }),
+                      h('span', null, source === 'remote' ? t('loading.remote') : t('loading')),
+                    )
+                  : null,
+                loading && snapshot ? h('div', { className: 'sd-refreshing', role: 'status', 'aria-live': 'polite' },
+                  h('span', { className: 'sd-spinner', 'aria-hidden': true }),
+                  h('span', null, t('loading.refresh')),
+                ) : null,
+                error
+                  ? h('div', { className: 'sd-error', role: 'alert' },
+                      h('p', null, t('error', { message: error })),
+                      h('button', { type: 'button', className: 'sd-btn', onClick: load }, t('retry')))
+                  : null,
+                !loading && !error && squads.length === 0 ? h('p', { className: 'sd-empty' }, t('empty')) : null,
+                [...groups.entries()].map(([key, group]) =>
+                  h('section', { key, className: 'sd-group' },
+                    h('h3', { className: 'sd-group-title', id: domId('sd-ws', key) }, group.title),
+                    h('div', { className: 'sd-squads' },
+                      group.squads.map((squad) => h(SquadCard, { key: squad.rootSessionId, squad, t, onOpen }))),
+                  )),
               ),
-              loading && !snapshot
-                ? h('div', { className: 'sd-loading', role: 'status', 'aria-live': 'polite' },
-                    h('span', { className: 'sd-spinner sd-spinner-lg', 'aria-hidden': true }),
-                    h('span', null, source === 'remote' ? t('loading.remote') : t('loading')),
-                  )
-                : null,
-              loading && snapshot ? h('div', { className: 'sd-refreshing', role: 'status', 'aria-live': 'polite' },
-                h('span', { className: 'sd-spinner', 'aria-hidden': true }),
-                h('span', null, t('loading.refresh')),
-              ) : null,
-              error
-                ? h('div', { className: 'sd-error', role: 'alert' },
-                    h('p', null, t('error', { message: error })),
-                    h('button', { type: 'button', className: 'sd-btn', onClick: load }, t('retry')))
-                : null,
-              !loading && !error && squads.length === 0 ? h('p', { className: 'sd-empty' }, t('empty')) : null,
-              [...groups.entries()].map(([key, group]) =>
-                h('section', { key, className: 'sd-group' },
-                  h('h3', { className: 'sd-group-title', id: domId('sd-ws', key) }, group.title),
-                  h('div', { className: 'sd-squads' },
-                    group.squads.map((squad) => h(SquadCard, { key: squad.rootSessionId, squad, t, onOpen }))),
-                )),
-            ),
+        ),
       )
     }
 
@@ -990,7 +1126,7 @@ window.__ModuleLoader__.load({
   flex-direction: column;
   gap: 16px;
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   box-sizing: border-box;
   padding: 16px 18px 24px;
   background: var(--dsw-alias-bg-base, Canvas);
@@ -999,6 +1135,19 @@ window.__ModuleLoader__.load({
   font-size: 13px;
   line-height: 1.45;
 }
+/* Only the workspace/task area scrolls; the title, tabs and totals stay put. */
+.sd-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scrollbar-gutter: stable;
+}
+.sd-hero, .sd-stats { flex: none; }
+.sd-scroll > * { flex: none; }
 .sd-root h2, .sd-root h3, .sd-root h4, .sd-root p { margin: 0; }
 .sd-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder); }
 .sd-hero-copy { min-width: 0; }
@@ -1244,6 +1393,63 @@ window.__ModuleLoader__.load({
 .sd-task-subject { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sd-task-foot { display: flex; gap: 8px; font-size: 11px; color: var(--dsw-alias-label-secondary, CanvasText); }
 .sd-task-ready { color: var(--dsw-alias-state-success-primary, CanvasText); }
+/* remote Multica task list: one compact row per issue */
+.sd-tasks-wrap { overflow-x: auto; }
+.sd-tasks {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.sd-tasks .sd-col-id { width: 104px; }
+.sd-tasks .sd-col-person { width: 136px; }
+.sd-tasks .sd-col-time { width: 148px; }
+.sd-tasks .sd-col-status { width: 104px; }
+.sd-tasks th {
+  padding: 0 10px 5px;
+  text-align: left;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary, GrayText);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+}
+.sd-tasks td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  color: var(--dsw-alias-label-primary, CanvasText);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-tasks tbody tr:last-child td { border-bottom: 0; }
+.sd-trow-link { cursor: pointer; }
+.sd-trow-link:hover td { background: var(--dsw-alias-bg-layer-2, Canvas); }
+.sd-trow:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, CanvasText); outline-offset: -2px; }
+.sd-cell-id { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--dsw-alias-label-secondary, CanvasText); }
+.sd-cell-person, .sd-cell-time { color: var(--dsw-alias-label-secondary, CanvasText); }
+.sd-cell-time { font-variant-numeric: tabular-nums; }
+.sd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--dsw-alias-bg-layer-2, Canvas);
+}
+.sd-chip::before { content: ''; inline-size: 6px; block-size: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.sd-chip-success { color: var(--dsw-alias-state-success-primary, CanvasText); background: var(--dsw-alias-state-success-tertiary, var(--dsw-alias-bg-layer-2, Canvas)); }
+.sd-chip-business { color: var(--dsw-alias-state-business-primary, CanvasText); background: var(--dsw-alias-state-business-tertiary, var(--dsw-alias-bg-layer-2, Canvas)); }
+.sd-chip-warn { color: var(--dsw-alias-state-warn-primary, CanvasText); background: var(--dsw-alias-state-warn-tertiary, var(--dsw-alias-bg-layer-2, Canvas)); }
+.sd-chip-error { color: var(--dsw-alias-state-error-primary, CanvasText); background: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText) 14%, var(--dsw-alias-bg-layer-1, Canvas)); }
+.sd-chip-idle { color: var(--dsw-alias-label-secondary, CanvasText); }
 .sd-hint, .sd-empty { color: var(--dsw-alias-label-secondary, CanvasText); }
 .sd-empty { padding: 28px 16px; border: 1px dashed var(--dsw-alias-border-l2, ButtonBorder); border-radius: 10px; text-align: center; }
 .sd-error {
@@ -1280,6 +1486,7 @@ window.__ModuleLoader__.load({
 @media (forced-colors: active) {
   .sd-root :where(button):focus-visible { outline: 2px solid CanvasText; }
   .sd-card-live { box-shadow: inset 3px 0 0 CanvasText; }
+  .sd-chip { border: 1px solid CanvasText; }
 }
 /* header actions + tabs */
 .sd-hero-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

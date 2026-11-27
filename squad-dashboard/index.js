@@ -275,12 +275,120 @@ function mapRunStatus(status) {
   return 'pending'
 }
 
+/** Multica folds every project workflow state into four canonical categories;
+ *  a state is terminal only when its category is done or closed. */
+const ISSUE_CATEGORY = {
+  backlog: 'unstarted', todo: 'unstarted',
+  in_progress: 'started', in_review: 'started', blocked: 'started',
+  done: 'done', completed: 'done', resolved: 'done',
+  cancelled: 'closed', canceled: 'closed', closed: 'closed',
+  duplicate: 'closed', archived: 'closed',
+}
+const TERMINAL_CATEGORIES = new Set(['done', 'closed'])
+
+function normalizeIssueCategory(value) {
+  if (typeof value !== 'string' || !value) return null
+  const key = value.toLowerCase()
+  if (key === 'unstarted' || key === 'started' || key === 'done' || key === 'closed') return key
+  return ISSUE_CATEGORY[key] ?? null
+}
+
+function issueCategory(issue) {
+  return normalizeIssueCategory(issue?.status_category) ?? normalizeIssueCategory(issue?.status)
+}
+
+function isTerminalIssue(issue) {
+  return TERMINAL_CATEGORIES.has(issueCategory(issue))
+}
+
+/** A run outside any issue is terminal once it completed; an issue run follows
+ *  the project workflow state instead of the run's own status. When the issue
+ *  lookup itself failed, keep the row rather than guessing a terminal state. */
+function remoteTaskIsTerminal(run, issue) {
+  if (issue) return isTerminalIssue(issue)
+  if (run?.issue_id) return false
+  return mapRunStatus(run?.status) === 'completed'
+}
+
 function runSubject(run, issueTitleById) {
   if (run.trigger_summary) return String(run.trigger_summary).slice(0, 160)
   const issueTitle = run.issue_id ? issueTitleById.get(run.issue_id) : null
   if (issueTitle) return issueTitle
   if (run.result && typeof run.result.output === 'string') return run.result.output.slice(0, 160)
   return run.kind ? `run:${run.kind}` : 'run'
+}
+
+/** Milliseconds for sorting mixed ISO timestamps; invalid values sort last. */
+function timestampOf(value) {
+  const parsed = typeof value === 'string' ? Date.parse(value) : NaN
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** One list row per Multica issue, carrying the issue's own workflow status
+ *  instead of the fixed lane vocabulary. Runs without an issue keep their own
+ *  id so chat-only executions are still listed. */
+function remoteTaskFromRun(run, agent, issue, memberNames, agentById) {
+  const fallbackStatus = mapRunStatus(run.status)
+  const created = issue?.created_at || run.created_at || run.dispatched_at || null
+  // A run's attribution names the human who started the work even when an
+  // agent created the issue; fall back to the issue creator.
+  let initiator = run.attribution?.originator?.name || run.attribution?.initiator?.name || null
+  if (!initiator && issue?.creator_id) {
+    initiator = issue.creator_type === 'agent'
+      ? agentById.get(issue.creator_id)?.name ?? null
+      : memberNames.get(issue.creator_id) ?? null
+  }
+  return {
+    id: issue?.id || run.id,
+    identifier: issue?.identifier || (typeof run.id === 'string' ? run.id.slice(0, 8) : null),
+    subject: issue?.title || runSubject(run, new Map()),
+    status: issue?.status_category || issue?.status || fallbackStatus,
+    statusName: typeof issue?.status_name === 'string' && issue.status_name.trim() ? issue.status_name.trim() : null,
+    createdAt: created,
+    initiator,
+    agentId: agent.id,
+    ownerName: agent.name,
+    ready: false,
+    blockedBy: [],
+  }
+}
+
+/** Keep the newest run per issue and list the result newest first. */
+function dedupeRemoteTasks(tasks) {
+  const byKey = new Map()
+  for (const task of tasks) {
+    if (!task) continue
+    const key = task.id || `${task.identifier ?? ''}:${task.subject ?? ''}`
+    const previous = byKey.get(key)
+    if (!previous || timestampOf(task.createdAt) > timestampOf(previous.createdAt)) byKey.set(key, task)
+  }
+  return [...byKey.values()].sort((left, right) => timestampOf(right.createdAt) - timestampOf(left.createdAt))
+}
+
+/** Workspace member names keyed by user id, used to name an issue creator. */
+async function loadRemoteMemberNames(remote, workspaceId) {
+  const rows = (await read(() => multicaGet(remote, `/api/workspaces/${encodeURIComponent(workspaceId)}/members`))) ?? []
+  const names = new Map()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (row?.user_id) names.set(row.user_id, row.name || row.email || null)
+  }
+  return names
+}
+
+/** Resolve all issue ids of one workspace in batches; a failed batch leaves
+ *  those runs on their (identifier-less) run fallback. */
+async function loadRemoteIssues(remote, workspaceId, issueIds) {
+  const unique = [...new Set(issueIds.filter((id) => typeof id === 'string' && id))]
+  const issues = new Map()
+  for (let index = 0; index < unique.length; index += 50) {
+    const params = new URLSearchParams()
+    params.set('workspace_id', workspaceId)
+    params.set('ids', unique.slice(index, index + 50).join(','))
+    const data = await read(() => multicaGet(remote, `/api/issues?${params.toString()}`))
+    const rows = Array.isArray(data?.issues) ? data.issues : Array.isArray(data) ? data : []
+    for (const issue of rows) if (issue?.id) issues.set(issue.id, issue)
+  }
+  return issues
 }
 
 async function buildRemoteSnapshot(ctx, config) {
@@ -298,6 +406,11 @@ async function buildRemoteSnapshot(ctx, config) {
     const list = (await read(() => multicaGet(remote, `/api/squads${query}`))) ?? []
     const agents = (await read(() => multicaGet(remote, `/api/agents${query}`))) ?? []
     const agentById = new Map(agents.map((agent) => [agent.id, agent]))
+    const memberNames = await loadRemoteMemberNames(remote, workspace.id)
+
+    // Read every squad's runs first so one workspace-wide issue lookup covers them all.
+    const drafts = []
+    const issueIds = []
     for (const squad of Array.isArray(list) ? list : []) {
       const members = (await read(() => multicaGet(remote, `/api/squads/${squad.id}/members${query}`))) ?? []
       const rows = []
@@ -305,29 +418,43 @@ async function buildRemoteSnapshot(ctx, config) {
         const agent = agentById.get(member.member_id)
         if (!agent) continue
         const runs = (await read(() => multicaGet(remote, multicaTasksPath(agent.id, workspace.id, remote.taskLimit)))) ?? []
-        const runList = Array.isArray(runs) ? runs : []
+        const runList = (Array.isArray(runs) ? runs : [])
+          .slice()
+          .sort((left, right) => timestampOf(right.created_at) - timestampOf(left.created_at))
+        for (const run of runList) if (run?.issue_id) issueIds.push(run.issue_id)
+        rows.push({ agent, member, runList })
+      }
+      drafts.push({ squad, rows })
+    }
+
+    const issues = await loadRemoteIssues(remote, workspace.id, issueIds)
+    for (const { squad, rows } of drafts) {
+      const members = rows.map(({ agent, member, runList }) => {
+        const tasks = dedupeRemoteTasks(
+          runList
+            .filter((run) => !remoteTaskIsTerminal(run, run.issue_id ? issues.get(run.issue_id) : null))
+            .map((run) => remoteTaskFromRun(
+              run,
+              agent,
+              run.issue_id ? issues.get(run.issue_id) : null,
+              memberNames,
+              agentById,
+            )),
+        )
         const running = runList.some((run) => mapRunStatus(run.status) === 'in_progress')
-        const latest = runList[0] ?? null
-        rows.push({
+        return {
           name: agent.name,
           sessionId: agent.id,
           activity: running ? 'running' : 'inactive',
           kind: 'child',
           reason: null,
           model: agent.model || null,
-          work: latest ? runSubject(latest, new Map()) : (member.role === 'leader' ? 'leader' : null),
+          work: tasks[0]?.subject || (member.role === 'leader' ? 'leader' : null),
           role: member.role || 'member',
           isLeader: member.role === 'leader',
-          tasks: runList.map((run) => ({
-            id: run.id,
-            subject: runSubject(run, new Map()),
-            status: mapRunStatus(run.status),
-            ownerName: agent.name,
-            ready: false,
-            blockedBy: [],
-          })),
-        })
-      }
+          tasks,
+        }
+      })
       squads.push({
         rootSessionId: `remote:${squad.id}`,
         workspaceId: workspace.id,
@@ -339,8 +466,8 @@ async function buildRemoteSnapshot(ctx, config) {
         title: squad.name,
         model: null,
         remoteUrl: remote.url,
-        members: rows,
-        tasks: rows.flatMap((row) => row.tasks),
+        members,
+        tasks: dedupeRemoteTasks(members.flatMap((row) => row.tasks)),
       })
     }
   }
@@ -646,4 +773,21 @@ export function apply(ctx, config) {
   return ctx.effect(() => () => { ctx.squadDashboard = undefined }, 'squad-dashboard: dispose')
 }
 
-export const __test = { buildRemoteSnapshot, loadRemoteConfig, multicaGet, normalizeConfig, loadConfig, saveConfig, dshHome, pluginDataDir, configPathOf, remoteConfigPath }
+export const __test = {
+  buildRemoteSnapshot,
+  loadRemoteConfig,
+  multicaGet,
+  remoteTaskFromRun,
+  dedupeRemoteTasks,
+  issueCategory,
+  isTerminalIssue,
+  remoteTaskIsTerminal,
+  loadRemoteIssues,
+  normalizeConfig,
+  loadConfig,
+  saveConfig,
+  dshHome,
+  pluginDataDir,
+  configPathOf,
+  remoteConfigPath,
+}

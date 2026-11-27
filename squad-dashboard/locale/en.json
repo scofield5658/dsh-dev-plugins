@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Squad dashboard",
-    "description": "Read-only squad dashboard: discovers squad sessions across workspaces and shows each squad's members, activity and Agent Team tasks in a sidebar panel. The local view works from squad presets; an optional remote Multica board can be configured."
+    "description": "Read-only squad dashboard: discovers squad sessions across workspaces and shows each squad's members, activity and Agent Team tasks. The local view works from squad presets; the remote Multica view lists active tasks with their ID, initiator, creation time and project workflow status."
   },
   "panel": "ECC",
   "title": "ECC Dashboard",
@@ -31,7 +31,7 @@
   "task.blocked": "Blocked",
   "task.ready": "Ready",
   "board.title": "Task board",
-  "board.remoteTitle": "Multica task board",
+  "board.remoteTitle": "Multica task list",
   "workspace.untitled": "Workspace",
   "kind.dev": "Engineering squad",
   "kind.product": "Product squad",
@@ -73,5 +73,12 @@
   "config.remote.saved": "Saved to {path}",
   "config.remote.hint": "Used only by the remote board; unrelated to local squad settings.",
   "config.labelWidth": "Label width",
-  "config.labelWidthHint": "Drag to resize the label column, double-click to reset"
+  "config.labelWidthHint": "Drag to resize the label column, double-click to reset",
+  "task.cancelled": "Cancelled",
+  "task.col.id": "ID",
+  "task.col.subject": "Task",
+  "task.col.initiator": "Initiator",
+  "task.col.created": "Created",
+  "task.col.status": "Status",
+  "task.review": "In review"
 }

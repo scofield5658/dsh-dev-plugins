@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "小队仪表盘",
-    "description": "跨工作区的只读小队看板：按工作区聚合小队会话，在侧边栏面板展示成员、活动状态与 Agent Team 任务。本地视图基于小队 preset 工作，并可配置可选的远端 Multica 看板。"
+    "description": "跨工作区的只读小队看板：按工作区聚合小队会话，在面板展示成员、活动状态与 Agent Team 任务。本地视图基于小队 preset 工作；远端 Multica 视图以任务列表展示未完成任务的任务编号、发起人、创建时间和项目工作流状态。"
   },
   "panel": "产研ECC",
   "title": "产研ECC仪表盘",
@@ -31,7 +31,7 @@
   "task.blocked": "阻塞",
   "task.ready": "可开始",
   "board.title": "任务看板",
-  "board.remoteTitle": "Multica 任务看板",
+  "board.remoteTitle": "Multica 任务列表",
   "workspace.untitled": "工作区",
   "kind.dev": "研发小队",
   "kind.product": "产品小队",
@@ -73,5 +73,12 @@
   "config.remote.saved": "已保存到 {path}",
   "config.remote.hint": "仅用于远端看板监控，与上面的本地小队配置无关。",
   "config.labelWidth": "标签宽度",
-  "config.labelWidthHint": "拖动调整标签列宽度，双击恢复默认"
+  "config.labelWidthHint": "拖动调整标签列宽度，双击恢复默认",
+  "task.cancelled": "已取消",
+  "task.col.id": "编号",
+  "task.col.subject": "任务",
+  "task.col.initiator": "发起人",
+  "task.col.created": "创建时间",
+  "task.col.status": "状态",
+  "task.review": "评审中"
 }

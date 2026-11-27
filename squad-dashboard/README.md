@@ -12,8 +12,10 @@
 
 - 面板标题为「产研ECC仪表盘」。按工作区分组；每张小队卡片先标明小队类型，再给出会话标题。
 - 成员行先写当前事项（目录 `label`，没有则用其名下未完成的 Team 任务主题），再写成员名、模型路由和状态。没有事项时明确显示「未记录当前事项」。
-- Team 任务板折叠区：subject / status / owner / blocked；
-- 点击小队标题或成员 → `ctx.uiWorkspace.openSession()` 跳转到对应会话（成员无 sessionId 时跳小队 Leader 会话）；
+- 本地 Team 任务板折叠区：subject / status / owner / blocked；
+- 远端 Multica 任务列表：一行一个任务，列出任务编号、任务标题、发起人、创建时间和项目自己的工作流状态；不按固定泳道分组，项目换工作流不需要改插件；
+- 点击小队标题或成员 → `ctx.uiWorkspace.openSession()` 跳转到对应会话（成员无 sessionId 时跳小队 Leader 会话）；点击远端任务行 → 打开 Multica 上对应的 Issue；
+- 标题、页签和统计固定；只有工作区 / 小队任务区独立滚动，向下看任务时仍能切页签、刷新和看总数；
 - 手动刷新 + 按 `pollMs`（默认 10s，插件 Config 可调）轮询，面板不可见时暂停；
 - 双语 zh/en、深浅色主题跟随宿主（只用 `--dsw-alias-*`）。
 
@@ -105,7 +107,8 @@ HTTP 路由（与面板共用宿主 Web 会话鉴权）：
 
 面板顶部三个页签：**本地 / 远端 / 配置**。
 
-- **远端**：只读监控远端 Multica 运行时的 Agent 与小队执行情况，维度与本地一致——按工作区分组的小队卡片、成员（状态 / 当前执行摘要 / 真实模型路由）、执行记录看板。数据全部来自 Multica REST API（Bearer token，只读 GET）：`/api/workspaces`、`/api/squads?workspace_id=`、`/api/squads/{id}/members`、`/api/agents?workspace_id=`、`/api/agents/{id}/tasks`。
+- **远端**：只读监控远端 Multica 运行时的 Agent 与小队执行情况——按工作区分组的小队卡片、成员（状态 / 当前执行摘要 / 真实模型路由）、任务列表。任务列表一行一个 Issue，展示 `identifier`（任务编号）、标题、发起人、创建时间和 Issue 当前状态；状态优先显示项目自定义的 `status_name`，没有时回退到已知状态词（待办 / 进行中 / 评审中 / 已完成 / 阻塞 / 已取消），未知状态原样显示，所以不同项目的工作流不需要插件适配。只展示未进入终态的任务：Multica 会把项目工作流状态归一到 `unstarted` / `started` / `done` / `closed` 四类，`done`（已完成）和 `closed`（已取消、已关闭）不会进入列表。
+- 远端数据全部来自 Multica REST API（Bearer token，只读 GET）：`/api/workspaces`、`/api/squads?workspace_id=`、`/api/squads/{id}/members`、`/api/agents?workspace_id=`、`/api/agents/{id}/tasks`，以及用于补齐任务编号 / 发起人 / 创建时间 / 状态的 `/api/workspaces/{id}/members` 与 `/api/issues?workspace_id=&ids=`（按工作区批量查询）。单个查询失败时对应字段降级，任务列表仍会返回。
 - **远端连接配置**：配置页底部「远端 Multica」卡片——服务地址、Token（保存后只回显 `***`，留空表示沿用已存 token）、可选工作区限定、`测试连接`（列工作区数）与 `保存连接`。配置写入 `$DSH_HOME/plugins/squad-dashboard/squad-remote.json`（默认 `~/.dsh/plugins/squad-dashboard/squad-remote.json`；文件权限 600；插件 Config `remoteConfigPath` 可改）。
 - 不配置地址与 Token 时，远端页签只显示未连接提示，不发起任何请求。
 - 远端视图不提供任何写操作；点击成员不会跳转（本地会话跳转仅对本地视图生效）。
@@ -115,7 +118,8 @@ HTTP 路由（与面板共用宿主 Web 会话鉴权）：
 - 小队识别（满足其一即视为小队）：`agentTeams.isEnabled(root)`、preset id 以 `squadPresetPrefix` 开头或出现在 `squadKinds` 别名里、`subagents.listDescendants()` 非空。
 - 小队类型：`config.squadKinds` 显式别名优先；否则由 `agentPresets.presetForSession(agent.session)` 返回的 preset id 按前缀推导。
 - 成员列表：`subagents.listDescendants(rootSessionId)`。当前事项取目录行的 `label`；成员名取 `name`，否则 `path`；会话 id 取 `id`。
-- 任务板：仅 `agentTeams.isEnabled` 时读 `agentTeams.listTasks(root)`，失败降级为空数组。成员名下未完成任务的 `subject` 优先于 `label`。
+- 本地任务板：仅 `agentTeams.isEnabled` 时读 `agentTeams.listTasks(root)`，失败降级为空数组。成员名下未完成任务的 `subject` 优先于 `label`。
+- 远端任务列表：每个成员的 `/api/agents/{id}/tasks` 运行记录先按 Issue 去重（保留最新一次运行，按 `created_at` 倒序），再用工作区批量查询到的 Issue 补齐编号、标题、发起人（优先取运行记录的 `attribution`，缺失时回退到 Issue `creator_id` 对应的工作区成员名）和 `created_at` / `status`。没有 Issue 的运行记录用运行 id 前 8 位作为编号，`completed` 时视为终态；Issue 查询失败时不猜测终态，保留该行。终态判断按 Multica 的 `status_category`（缺失时 `status`）归一成 `done` / `closed`，命中即从成员任务、小队任务和统计计数中移除。
 - 会话标题：`sessionTitle.get(agent.session)` 取快照的 `title`。`presetForSession`、`workingDirectory.get`、`sessionTitle.get` 都接收 Session，不接收裸 session id。
 - 成员模型：`sessionProjections.snapshot()` 的 `values.modelSelection`；不可读时回退到配置文件。
 

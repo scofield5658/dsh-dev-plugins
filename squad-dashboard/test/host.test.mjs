@@ -158,6 +158,94 @@ test('squad_config tool keeps the per-plugin config in sync', async () => {
   }
 })
 
+test('remoteTaskFromRun uses the issue metadata and the project workflow state', () => {
+  const task = __test.remoteTaskFromRun(
+    {
+      id: 'run-1',
+      issue_id: 'issue-1',
+      status: 'claimed',
+      created_at: '2026-09-17T13:33:47Z',
+      trigger_summary: 'trigger',
+    },
+    { id: 'agent-1', name: 'worker' },
+    {
+      id: 'issue-1',
+      identifier: 'NBCF-28',
+      title: 'ContextHub 首版',
+      status: 'in_review',
+      status_category: 'started',
+      status_name: '评估中',
+      creator_id: 'user-1',
+      creator_type: 'member',
+      created_at: '2026-09-01T02:00:00Z',
+    },
+    new Map([['user-1', '王杰(gfwangjie)']]),
+    new Map([['agent-1', { id: 'agent-1', name: 'worker' }]]),
+  )
+  assert.equal(task.id, 'issue-1')
+  assert.equal(task.identifier, 'NBCF-28')
+  assert.equal(task.subject, 'ContextHub 首版')
+  assert.equal(task.status, 'started')
+  assert.equal(task.statusName, '评估中')
+  assert.equal(task.initiator, '王杰(gfwangjie)')
+  assert.equal(task.createdAt, '2026-09-01T02:00:00Z')
+  assert.equal(task.ownerName, 'worker')
+  assert.equal(task.agentId, 'agent-1')
+})
+
+test('remoteTaskFromRun falls back to run metadata without an issue', () => {
+  const task = __test.remoteTaskFromRun(
+    {
+      id: 'e3fd735f696e4fbaafb6',
+      status: 'running',
+      created_at: '2026-09-01T02:49:57Z',
+      trigger_summary: '请评审设计',
+      attribution: { initiator: { name: '李明' } },
+    },
+    { id: 'agent-2', name: 'reviewer' },
+    null,
+    new Map(),
+    new Map(),
+  )
+  assert.equal(task.identifier, 'e3fd735f')
+  assert.equal(task.subject, '请评审设计')
+  assert.equal(task.status, 'in_progress')
+  assert.equal(task.statusName, null)
+  assert.equal(task.initiator, '李明')
+  assert.equal(task.createdAt, '2026-09-01T02:49:57Z')
+})
+
+test('dedupeRemoteTasks keeps the newest run per issue and sorts newest first', () => {
+  const tasks = __test.dedupeRemoteTasks([
+    { id: 'issue-a', identifier: 'A-1', createdAt: '2026-09-01T00:00:00Z' },
+    { id: 'issue-b', identifier: 'B-2', createdAt: '2026-09-03T00:00:00Z' },
+    { id: 'issue-a', identifier: 'A-1', createdAt: '2026-09-02T00:00:00Z' },
+    { id: 'issue-c', identifier: 'C-3', createdAt: null },
+  ])
+  assert.deepEqual(tasks.map((task) => task.identifier), ['B-2', 'A-1', 'C-3'])
+})
+
+test('issueCategory folds built-in and workflow statuses into four categories', () => {
+  assert.equal(__test.issueCategory({ status: 'in_review' }), 'started')
+  assert.equal(__test.issueCategory({ status: 'backlog' }), 'unstarted')
+  assert.equal(__test.issueCategory({ status: 'completed' }), 'done')
+  assert.equal(__test.issueCategory({ status: 'cancelled' }), 'closed')
+  assert.equal(__test.issueCategory({ status_category: 'done' }), 'done')
+  assert.equal(__test.issueCategory({ status_category: 'closed', status: 'anything' }), 'closed')
+  assert.equal(__test.issueCategory({ status: 'custom_state' }), null)
+})
+
+test('remoteTaskIsTerminal hides done and closed workflow states only', () => {
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'running' }, { status: 'done' }), true)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'running' }, { status: 'cancelled' }), true)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'running' }, { status_category: 'closed' }), true)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'running' }, { status: 'in_review' }), false)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'running' }, { status_category: 'started' }), false)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'completed' }, null), true)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'running' }, null), false)
+  assert.equal(__test.remoteTaskIsTerminal({ status: 'completed', issue_id: 'missing' }, null), false)
+})
+
 test('locale files match the client dictionaries', () => {
   const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   for (const file of ['en.json', 'zh.json']) {
