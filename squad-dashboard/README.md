@@ -11,7 +11,7 @@
 ## 功能
 
 - 面板标题为「产研ECC仪表盘」。按工作区分组；每张小队卡片先标明小队类型，再给出会话标题。
-- 成员行先写当前事项（目录 `label`，没有则用其名下未完成的 Team 任务主题），再写成员名、模型路由和状态。没有事项时明确显示「未记录当前事项」。
+- 成员行先写当前事项（目录 `label`，没有则用其名下未完成的 Team 任务主题），再写成员名、模型路由和状态。没有事项时明确显示「未记录当前事项」。Leader 的皇冠与成员名作为一组显示；成员名靠左，模型路由与状态作为一组靠右对齐，模型路由按内容自适应宽度完整展示，只有卡片真的放不下时才省略（悬停可看完整路由）。
 - 本地 Team 任务板折叠区：subject / status / owner / blocked；
 - 远端 Multica 任务列表：一行一个任务，列出任务编号、任务标题、发起人、创建时间和项目自己的工作流状态；不按固定泳道分组，项目换工作流不需要改插件；
 - 点击小队标题或成员 → `ctx.uiWorkspace.openSession()` 跳转到对应会话（成员无 sessionId 时跳小队 Leader 会话）；点击远端任务行 → 打开 Multica 上对应的 Issue；
@@ -122,6 +122,7 @@ HTTP 路由（与面板共用宿主 Web 会话鉴权）：
 - 远端任务列表：每个成员的 `/api/agents/{id}/tasks` 运行记录先按 Issue 去重（保留最新一次运行，按 `created_at` 倒序），再用工作区批量查询到的 Issue 补齐编号、标题、发起人（优先取运行记录的 `attribution`，缺失时回退到 Issue `creator_id` 对应的工作区成员名）和 `created_at` / `status`。没有 Issue 的运行记录用运行 id 前 8 位作为编号，`completed` 时视为终态；Issue 查询失败时不猜测终态，保留该行。终态判断按 Multica 的 `status_category`（缺失时 `status`）归一成 `done` / `closed`，命中即从成员任务、小队任务和统计计数中移除。
 - 会话标题：`sessionTitle.get(agent.session)` 取快照的 `title`。`presetForSession`、`workingDirectory.get`、`sessionTitle.get` 都接收 Session，不接收裸 session id。
 - 成员模型：`sessionProjections.snapshot()` 的 `values.modelSelection`；不可读时回退到配置文件。
+- 远端队长：`/api/squads/{id}/members` 的 `role` 为 `leader`，或成员的 `member_id`（Agent 类型即 Agent id）命中小队的 `leader_id` 时视为队长。有的工作区把成员 `role` 全留空、只用 `leader_id` 标记队长，两种标记都认，队长行显示皇冠。
 
 ## 验证步骤
 

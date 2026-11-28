@@ -336,12 +336,20 @@ window.__ModuleLoader__.load({
         },
           h('span', { className: work ? 'sd-work' : 'sd-work sd-work-empty' }, work || t('member.noWork')),
           h('span', { className: 'sd-member-meta' },
-            (member.role === 'leader' || member.isLeader === true) ? h(Crown, { t }) : null,
-            h('span', { className: 'sd-member-name' }, member.name || member.path),
-            model ? h('span', { className: 'sd-model' }, model) : null,
-            h('span', { className: 'sd-status' },
-              h('span', { className: 'sd-status-dot', 'aria-hidden': true }),
-              statusText,
+            h('span', { className: 'sd-member-id' },
+              (member.role === 'leader' || member.isLeader === true) ? h(Crown, { t }) : null,
+              h('span', {
+                className: 'sd-member-name',
+                title: member.name || member.path || undefined,
+              }, member.name || member.path),
+            ),
+            // Name on the left, model route + status as one unit on the right.
+            h('span', { className: 'sd-member-aside' },
+              model ? h('span', { className: 'sd-model', title: member.model || undefined }, model) : null,
+              h('span', { className: 'sd-status' },
+                h('span', { className: 'sd-status-dot', 'aria-hidden': true }),
+                statusText,
+              ),
             ),
           ),
         ),
@@ -1266,6 +1274,9 @@ window.__ModuleLoader__.load({
   background: color-mix(in srgb, var(--dsw-alias-state-done-primary, CanvasText) 16%, var(--dsw-alias-bg-layer-1, Canvas));
 }
 .sd-members { display: grid; grid-template-columns: 1fr; gap: 8px; }
+/* Let a card shrink below its content's min-content width so the row inside
+   can ellipsize instead of pushing the status out of the card. */
+.sd-members > li { min-width: 0; }
 .sd-member {
   display: flex;
   flex-direction: column;
@@ -1294,15 +1305,19 @@ window.__ModuleLoader__.load({
   -webkit-box-orient: vertical;
 }
 .sd-work-empty { font-weight: 400; color: var(--dsw-alias-label-secondary, CanvasText); }
-.sd-member-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.sd-member-meta { display: flex; align-items: center; gap: 12px; min-width: 0; }
+/* Name on the left. The model badge and the status form one right-aligned
+   unit, so their right edge never depends on how long the name is. */
+.sd-member-id { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.sd-member-aside { display: inline-flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
 .sd-member-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dsw-alias-label-secondary, CanvasText); }
 .sd-crown { display: inline-flex; align-items: center; flex: none; color: var(--dsw-alias-state-warning-primary, #e3b341); }
 
+/* The model badge sizes to its text: a fixed cap used to cut long route ids
+   even when the row had room. It only ellipsizes when the row is really full. */
 .sd-model {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  max-width: 130px;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

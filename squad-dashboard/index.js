@@ -365,6 +365,18 @@ function dedupeRemoteTasks(tasks) {
   return [...byKey.values()].sort((left, right) => timestampOf(right.createdAt) - timestampOf(left.createdAt))
 }
 
+/** A squad member leads the squad when Multica tags the role "leader" or when
+ *  the squad's leader_id points at it. Some workspaces leave every member role
+ *  empty and only fill leader_id, so both marks count; the agent id is accepted
+ *  because agent-typed members carry it as member_id on some releases. */
+export function remoteMemberIsLeader(member, squad, agentId) {
+  if (!member) return false
+  if (member.role === 'leader') return true
+  const leaderId = squad?.leader_id ?? squad?.leaderId ?? null
+  if (!leaderId) return false
+  return member.member_id === leaderId || member.memberId === leaderId || agentId === leaderId
+}
+
 /** Workspace member names keyed by user id, used to name an issue creator. */
 async function loadRemoteMemberNames(remote, workspaceId) {
   const rows = (await read(() => multicaGet(remote, `/api/workspaces/${encodeURIComponent(workspaceId)}/members`))) ?? []
@@ -442,6 +454,7 @@ async function buildRemoteSnapshot(ctx, config) {
             )),
         )
         const running = runList.some((run) => mapRunStatus(run.status) === 'in_progress')
+        const isLeader = remoteMemberIsLeader(member, squad, agent.id)
         return {
           name: agent.name,
           sessionId: agent.id,
@@ -449,9 +462,9 @@ async function buildRemoteSnapshot(ctx, config) {
           kind: 'child',
           reason: null,
           model: agent.model || null,
-          work: tasks[0]?.subject || (member.role === 'leader' ? 'leader' : null),
-          role: member.role || 'member',
-          isLeader: member.role === 'leader',
+          work: tasks[0]?.subject || (isLeader ? 'leader' : null),
+          role: isLeader ? 'leader' : member.role || 'member',
+          isLeader,
           tasks,
         }
       })
@@ -778,6 +791,7 @@ export const __test = {
   loadRemoteConfig,
   multicaGet,
   remoteTaskFromRun,
+  remoteMemberIsLeader,
   dedupeRemoteTasks,
   issueCategory,
   isTerminalIssue,

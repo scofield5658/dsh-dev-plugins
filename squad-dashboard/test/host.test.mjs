@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { squadKind, isSquad, mapMember, apply, __test } from '../index.js'
+import { squadKind, isSquad, mapMember, remoteMemberIsLeader, apply, __test } from '../index.js'
 
 test('squadKind derives the kind from the configured prefix', () => {
   assert.equal(squadKind('squad-dev-leader'), 'dev')
@@ -156,6 +156,20 @@ test('squad_config tool keeps the per-plugin config in sync', async () => {
     else process.env.DSH_HOME = previous
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('remoteMemberIsLeader honors the role tag and the squad leader_id', () => {
+  const squad = { id: 'squad-1', leader_id: 'agent-leader' }
+  assert.equal(remoteMemberIsLeader({ role: 'leader', member_id: 'agent-1' }, squad), true)
+  // Some workspaces leave every member role empty and only set leader_id.
+  assert.equal(remoteMemberIsLeader({ role: '', member_id: 'agent-leader' }, squad), true)
+  assert.equal(remoteMemberIsLeader({ role: '', member_id: 'agent-2' }, squad), false)
+  assert.equal(remoteMemberIsLeader({ role: 'member', member_id: 'agent-2' }, squad), false)
+  // The agent id is accepted when the member row does not carry member_id.
+  assert.equal(remoteMemberIsLeader({ role: '' }, squad, 'agent-leader'), true)
+  assert.equal(remoteMemberIsLeader({ role: '' }, squad, 'agent-2'), false)
+  assert.equal(remoteMemberIsLeader({ role: 'member', member_id: 'agent-2' }, { id: 'squad-2' }), false)
+  assert.equal(remoteMemberIsLeader(null, squad), false)
 })
 
 test('remoteTaskFromRun uses the issue metadata and the project workflow state', () => {
