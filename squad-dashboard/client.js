@@ -1041,6 +1041,13 @@ window.__ModuleLoader__.load({
             h('p', { className: 'sd-subtitle' }, t('subtitle')),
           ),
           h('div', { className: 'sd-hero-actions' },
+            // The data action sits before the tab group so the tabs keep their
+            // right-edge anchor: hiding it on the config tab, or disabling it
+            // while refreshing, never moves the tab bar.
+            view === 'board'
+              ? h('button', { type: 'button', className: 'sd-btn sd-btn-primary', onClick: () => load(source), disabled: loading },
+                  t('refresh'))
+              : null,
             h('div', { className: 'sd-tabs', role: 'tablist' },
               h('button', {
                 type: 'button',
@@ -1064,11 +1071,6 @@ window.__ModuleLoader__.load({
                 onClick: () => setView('config'),
               }, t('view.config')),
             ),
-            view === 'board'
-              ? h('button', { type: 'button', className: 'sd-btn sd-btn-primary', onClick: () => load(source), disabled: loading },
-                  loading ? h('span', { className: 'sd-spinner', 'aria-hidden': true }) : null,
-                  t('refresh'))
-              : null,
           ),
         ),
         h('div', { className: 'sd-body', 'aria-busy': busy ? 'true' : 'false' },

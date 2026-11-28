@@ -1,6 +1,6 @@
 {
   "name": "@local/squad-dashboard",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "private": true,
   "description": "Read-only squad dashboard: discovers squad sessions across workspaces and shows members, activity and agent-team tasks in a sidebar panel.",
   "type": "module",
