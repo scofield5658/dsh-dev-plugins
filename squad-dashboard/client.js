@@ -1025,6 +1025,15 @@ window.__ModuleLoader__.load({
         groups.get(key).squads.push(squad)
       }
 
+      // Manual refresh / tab switch: keep the header usable, mask the data
+      // region underneath and centre a spinner in the visible area instead of
+      // pushing a small "refreshing" row into the list (which read as a
+      // left-aligned text line and shifted layout).
+      const busy = loading && view !== 'config'
+      const loadingLabel = snapshot
+        ? t('loading.refresh')
+        : source === 'remote' ? t('loading.remote') : t('loading')
+
       return h('div', { className: 'sd-root' },
         h('header', { className: 'sd-hero' },
           h('div', { className: 'sd-hero-copy' },
@@ -1062,43 +1071,42 @@ window.__ModuleLoader__.load({
               : null,
           ),
         ),
-        view !== 'config' && !(source === 'remote' && snapshot && snapshot.configured === false)
-          ? h('ul', { className: 'sd-stats', role: 'list' },
-              h(StatItem, { tone: 'squads', label: t('stat.squads'), value: squads.length }),
-              h(StatItem, { tone: 'members', label: t('stat.members'), value: totalMembers }),
-              h(StatItem, { tone: 'running', label: t('stat.running'), value: totalRunning }),
-              h(StatItem, { tone: 'tasks', label: t('stat.tasks'), value: totalTasks }),
-            )
-          : null,
-        h('div', { className: 'sd-scroll', key: `${view}:${source}` },
-          view === 'config'
-            ? h(ConfigView, { t })
-            : source === 'remote' && snapshot && snapshot.configured === false
-            ? h('div', { className: 'sd-empty' }, t('remote.notConfigured'))
-            : h(React.Fragment, null,
-                loading && !snapshot
-                  ? h('div', { className: 'sd-loading', role: 'status', 'aria-live': 'polite' },
-                      h('span', { className: 'sd-spinner sd-spinner-lg', 'aria-hidden': true }),
-                      h('span', null, source === 'remote' ? t('loading.remote') : t('loading')),
-                    )
-                  : null,
-                loading && snapshot ? h('div', { className: 'sd-refreshing', role: 'status', 'aria-live': 'polite' },
-                  h('span', { className: 'sd-spinner', 'aria-hidden': true }),
-                  h('span', null, t('loading.refresh')),
-                ) : null,
-                error
-                  ? h('div', { className: 'sd-error', role: 'alert' },
-                      h('p', null, t('error', { message: error })),
-                      h('button', { type: 'button', className: 'sd-btn', onClick: load }, t('retry')))
-                  : null,
-                !loading && !error && squads.length === 0 ? h('p', { className: 'sd-empty' }, t('empty')) : null,
-                [...groups.entries()].map(([key, group]) =>
-                  h('section', { key, className: 'sd-group' },
-                    h('h3', { className: 'sd-group-title', id: domId('sd-ws', key) }, group.title),
-                    h('div', { className: 'sd-squads' },
-                      group.squads.map((squad) => h(SquadCard, { key: squad.rootSessionId, squad, t, onOpen }))),
-                  )),
-              ),
+        h('div', { className: 'sd-body', 'aria-busy': busy ? 'true' : 'false' },
+          view !== 'config' && !(source === 'remote' && snapshot && snapshot.configured === false)
+            ? h('ul', { className: 'sd-stats', role: 'list' },
+                h(StatItem, { tone: 'squads', label: t('stat.squads'), value: squads.length }),
+                h(StatItem, { tone: 'members', label: t('stat.members'), value: totalMembers }),
+                h(StatItem, { tone: 'running', label: t('stat.running'), value: totalRunning }),
+                h(StatItem, { tone: 'tasks', label: t('stat.tasks'), value: totalTasks }),
+              )
+            : null,
+          h('div', { className: 'sd-scroll', key: `${view}:${source}` },
+            view === 'config'
+              ? h(ConfigView, { t })
+              : source === 'remote' && snapshot && snapshot.configured === false
+              ? h('div', { className: 'sd-empty' }, t('remote.notConfigured'))
+              : h(React.Fragment, null,
+                  error
+                    ? h('div', { className: 'sd-error', role: 'alert' },
+                        h('p', null, t('error', { message: error })),
+                        h('button', { type: 'button', className: 'sd-btn', onClick: load }, t('retry')))
+                    : null,
+                  !loading && !error && squads.length === 0 ? h('p', { className: 'sd-empty' }, t('empty')) : null,
+                  [...groups.entries()].map(([key, group]) =>
+                    h('section', { key, className: 'sd-group' },
+                      h('h3', { className: 'sd-group-title', id: domId('sd-ws', key) }, group.title),
+                      h('div', { className: 'sd-squads' },
+                        group.squads.map((squad) => h(SquadCard, { key: squad.rootSessionId, squad, t, onOpen }))),
+                    )),
+                ),
+          ),
+          busy
+            ? h('div', { className: 'sd-loading-mask', role: 'status', 'aria-live': 'polite' },
+                h('span', { className: 'sd-loading-pill' },
+                  h('span', { className: 'sd-spinner sd-spinner-lg', 'aria-hidden': true }),
+                  h('span', { className: 'sd-loading-label' }, loadingLabel),
+                ))
+            : null,
         ),
       )
     }
@@ -1142,6 +1150,16 @@ window.__ModuleLoader__.load({
   font-family: inherit;
   font-size: 13px;
   line-height: 1.45;
+}
+/* Data region: stats + scrolling list. The refresh overlay is anchored to this
+   box, so it is centred in the visible area and does not scroll away. */
+.sd-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 /* Only the workspace/task area scrolls; the title, tabs and totals stay put. */
 .sd-scroll {
@@ -1502,6 +1520,9 @@ window.__ModuleLoader__.load({
   .sd-root :where(button):focus-visible { outline: 2px solid CanvasText; }
   .sd-card-live { box-shadow: inset 3px 0 0 CanvasText; }
   .sd-chip { border: 1px solid CanvasText; }
+  .sd-loading-mask { background: Canvas; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .sd-loading-pill { border-color: CanvasText; }
+  .sd-spinner { border-color: GrayText; border-top-color: Highlight; }
 }
 /* header actions + tabs */
 .sd-hero-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1590,10 +1611,43 @@ window.__ModuleLoader__.load({
   border-radius: 50%;
   animation: sd-spin 0.7s linear infinite;
 }
-.sd-spinner-lg { inline-size: 18px; block-size: 18px; border-width: 2.5px; }
+.sd-spinner-lg { inline-size: 20px; block-size: 20px; border-width: 2.5px; }
 @keyframes sd-spin { to { transform: rotate(360deg); } }
-.sd-loading { display: flex; align-items: center; gap: 10px; padding: 28px 12px; color: var(--dsw-alias-label-secondary, CanvasText); font-size: 12px; }
-.sd-refreshing { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-tertiary, GrayText); font-size: 11px; }
+/* Refresh overlay: dims and slightly blurs the data region, then centres a
+   compact spinner pill over it. The 120ms delay keeps very fast refreshes from
+   flashing a spinner; "both" keeps it hidden during that delay. */
+.sd-loading-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas) 70%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  cursor: progress;
+  animation: sd-mask-in 160ms ease-out 120ms both;
+}
+.sd-loading-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+  color: var(--dsw-alias-label-secondary, CanvasText);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+@keyframes sd-mask-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sd-loading-mask { animation: none; }
+  .sd-spinner { animation-duration: 1.8s; }
+}
 .sd-config-saved { margin: 0; font-size: 11px; color: var(--dsw-alias-state-success-primary, GrayText); overflow-wrap: anywhere; }
 .sd-config-error { margin: 0; font-size: 11px; color: var(--dsw-alias-state-error-primary, GrayText); }
 `
